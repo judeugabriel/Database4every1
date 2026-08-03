@@ -12,6 +12,10 @@ export function buildObjectPreviewQuery(engine: string | undefined, objectName: 
   }
 }`, engine, { limit });
   }
+  if (engine === "redis") {
+    const database = databaseName?.match(/^db(\d+)$/i)?.[1];
+    return `DUMPVALUE${database ? ` DB ${database}` : ""} ${JSON.stringify(objectName)}`;
+  }
 
   const quotedName = quoteQualifiedName(objectName, engine);
   const databaseDirective = engine === "postgresql" && databaseName
