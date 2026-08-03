@@ -14,6 +14,7 @@ export function applyQueryControls(
   const offset = Math.max(0, page - 1) * limit;
   if (engine === "mongodb") return buildMongoQuery(query, limit, offset, sort);
   if (engine === "elasticsearch") return buildElasticsearchQuery(query, limit, offset, sort);
+  if (engine === "redis") return query;
   return buildSqlQuery(query, limit, offset, sort, engine === "mssql");
 }
 

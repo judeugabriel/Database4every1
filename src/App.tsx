@@ -626,6 +626,9 @@ function initialQueryFor(engine?: ConnectionSummary["engine"]) {
   if (engine === "elasticsearch") {
     return `POST /customers/_search\n{\n  "query": { "match_all": {} }\n}`;
   }
+  if (engine === "redis") {
+    return `SCAN 0 MATCH * COUNT 200`;
+  }
   return `SELECT\n  c.company_name,\n  COUNT(o.id) AS order_count,\n  SUM(o.total) AS lifetime_value\nFROM public.customers c\nJOIN public.orders o ON o.customer_id = c.id\nWHERE o.status = 'completed'\nGROUP BY c.id, c.company_name\nORDER BY lifetime_value DESC;`;
 }
 

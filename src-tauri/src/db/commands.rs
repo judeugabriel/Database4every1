@@ -8,8 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     elasticsearch::ElasticsearchDriver, mongodb::MongoDbDriver, mysql::MySqlDriver,
-    postgres::PostgresDriver, ConnectionConfig, ConnectionManager, DatabaseDriver, DatabaseType,
-    DbError, QueryResult, SchemaTree,
+    postgres::PostgresDriver, redis::RedisDriver, ConnectionConfig, ConnectionManager,
+    DatabaseDriver, DatabaseType, DbError, QueryResult, SchemaTree,
 };
 
 #[derive(Default)]
@@ -106,6 +106,7 @@ pub async fn connect_db(
         DatabaseType::MySql => Box::new(MySqlDriver::new()),
         DatabaseType::MongoDb => Box::new(MongoDbDriver::new()),
         DatabaseType::Elasticsearch => Box::new(ElasticsearchDriver::new()),
+        DatabaseType::Redis => Box::new(RedisDriver::new()),
         other => return Err(DbError::UnsupportedDatabase(format!("{other:?}")).into()),
     };
 

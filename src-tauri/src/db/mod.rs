@@ -11,6 +11,7 @@ pub mod elasticsearch;
 pub mod mongodb;
 pub mod mysql;
 pub mod postgres;
+pub mod redis;
 pub mod ssh_tunnel;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

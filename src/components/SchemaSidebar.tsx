@@ -148,6 +148,7 @@ export function SchemaSidebar({
                   <ObjectNode
                     key={`collection-${collection.name}`}
                     object={collection}
+                    databaseName={database.name}
                     kind="collection"
                     onOpen={onOpenObject}
                     onImport={onImportObject}
@@ -159,6 +160,7 @@ export function SchemaSidebar({
               <ObjectNode
                 key={`collection-${collection.name}`}
                 object={collection}
+                databaseName={database.name}
                 kind="collection"
                 onOpen={onOpenObject}
                 onImport={onImportObject}
