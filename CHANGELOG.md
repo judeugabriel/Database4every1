@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/judeugabriel/Database4every1/compare/Database4every1-v0.4.0...Database4every1-v0.4.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* connection via ssh fastest and allowing duplicate connections ([22d55b8](https://github.com/judeugabriel/Database4every1/commit/22d55b8cb2fe115647c2d22e6519db486b08a8b2))
+* connection via ssh fastest and allowing duplicate connections ([fe84a58](https://github.com/judeugabriel/Database4every1/commit/fe84a5877dae8069a76481acc18d64d60ce32be4))
+
 ## [0.4.0](https://github.com/judeugabriel/Database4every1/compare/Database4every1-v0.3.0...Database4every1-v0.4.0) (2026-08-05)
 
 
