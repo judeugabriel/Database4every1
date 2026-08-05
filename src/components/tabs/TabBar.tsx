@@ -1,8 +1,13 @@
-import type { MouseEvent } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 import type { IDockviewPanelHeaderProps } from "dockview-react";
 import { FileCode2, X } from "lucide-react";
 
-export function TabBar({ api, containerApi }: IDockviewPanelHeaderProps) {
+interface QueryTabHeaderParams {
+  tabColor?: string;
+  [key: string]: unknown;
+}
+
+export function TabBar({ api, containerApi, params }: IDockviewPanelHeaderProps<QueryTabHeaderParams>) {
   const closeTab = (tabId: string) => {
     containerApi.getPanel(tabId)?.api.close();
   };
@@ -19,6 +24,7 @@ export function TabBar({ api, containerApi }: IDockviewPanelHeaderProps) {
   return (
     <div
       className="query-tab"
+      style={{ "--tab-accent": params.tabColor ?? "#64748B" } as CSSProperties}
       title={`${api.title ?? "Query"} — middle-click to close`}
       onMouseDown={(event) => event.button === 1 && event.preventDefault()}
       onAuxClick={(event) => handleAuxClick(event, api.id)}
