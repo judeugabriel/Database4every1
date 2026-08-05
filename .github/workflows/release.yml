@@ -38,14 +38,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS Apple Silicon DMG
-            platform: macos-latest
-            rust_targets: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin --bundles dmg
-          - name: macOS Intel DMG
-            platform: macos-15-intel
-            rust_targets: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin --bundles dmg
+          # macOS generation is temporarily disabled. Re-enable these entries
+          # after Apple Developer ID signing/notarization secrets are configured.
+          # - name: macOS Apple Silicon DMG
+          #   platform: macos-latest
+          #   rust_targets: aarch64-apple-darwin
+          #   args: --target aarch64-apple-darwin --bundles dmg
+          # - name: macOS Intel DMG
+          #   platform: macos-15-intel
+          #   rust_targets: x86_64-apple-darwin
+          #   args: --target x86_64-apple-darwin --bundles dmg
           - name: Linux x64 AppImage, DEB and RPM
             platform: ubuntu-22.04
             rust_targets: x86_64-unknown-linux-gnu
@@ -94,17 +96,81 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Validate Apple signing and notarization secrets
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing required Apple release secrets: ${missing[*]}"
+            echo "See .github/APPLE_SIGNING.md for setup instructions."
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/database4every1-certificate.p12"
+          keychain_path="$RUNNER_TEMP/database4every1-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychains -d user -s "$keychain_path" login.keychain-db
+          security default-keychain -d user -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+
+          signing_identity="$(security find-identity -v -p codesigning "$keychain_path" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -n 1)"
+          if [ -z "$signing_identity" ]; then
+            echo "::error::The imported certificate is not a valid Developer ID Application identity."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
+
       - name: Build and upload installers
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Ad-hoc signing prevents unsigned Apple Silicon apps from being
-          # reported as damaged. Replace this with Apple signing secrets when
-          # distributing a notarized production build.
-          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ needs.release-please.outputs.tag_name }}
           releaseName: Database4every1 v${{ needs.release-please.outputs.version }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Verify signed and notarized macOS artifacts
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app_path="$(find src-tauri/target -type d -path '*/release/bundle/macos/Database4every1.app' -print -quit)"
+          dmg_path="$(find src-tauri/target -type f -path '*/release/bundle/dmg/*.dmg' -print -quit)"
+          if [ -z "$app_path" ] || [ -z "$dmg_path" ]; then
+            echo "::error::Expected macOS app and DMG artifacts were not produced."
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          spctl --assess --type execute --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+          xcrun stapler validate "$dmg_path"
