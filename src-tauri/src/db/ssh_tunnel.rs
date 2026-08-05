@@ -27,13 +27,21 @@ impl SshTunnel {
         destination_host: &str,
         destination_port: u16,
     ) -> Result<Self, DbError> {
+        let timeout = Duration::from_secs(config.connect_timeout_secs.unwrap_or(15).clamp(1, 300));
         let config = config.clone();
         let destination_host = destination_host.to_owned();
-        tokio::task::spawn_blocking(move || {
+        let task = tokio::task::spawn_blocking(move || {
             Self::start_blocking(config, destination_host, destination_port)
-        })
-        .await
-        .map_err(|error| DbError::Connection(format!("SSH tunnel task failed: {error}")))?
+        });
+        tokio::time::timeout(timeout + Duration::from_secs(2), task)
+            .await
+            .map_err(|_| {
+                DbError::Connection(format!(
+                    "SSH tunnel setup timed out after {}s",
+                    timeout.as_secs()
+                ))
+            })?
+            .map_err(|error| DbError::Connection(format!("SSH tunnel task failed: {error}")))?
     }
 
     fn start_blocking(
@@ -145,10 +153,10 @@ fn test_forwarding(
     destination_host: &str,
     destination_port: u16,
 ) -> Result<(), DbError> {
-    let (_session, mut channel) = open_forwarding(config, destination_host, destination_port)?;
-    channel.close().map_err(|error| {
-        DbError::Connection(format!("SSH forwarding test could not close cleanly: {error}"))
-    })?;
+    // Successfully opening the direct-tcpip channel proves the route. Waiting
+    // for a remote close acknowledgement can block on Redis endpoints, which
+    // are designed to keep connections open until the client disconnects.
+    let (_session, _channel) = open_forwarding(config, destination_host, destination_port)?;
     Ok(())
 }
 
@@ -160,9 +168,12 @@ fn open_forwarding(
     let timeout = Duration::from_secs(config.connect_timeout_secs.unwrap_or(15).clamp(1, 300));
     let addresses = (config.host.as_str(), config.port)
         .to_socket_addrs()
-        .map_err(|error| DbError::Connection(format!(
-            "SSH jump host DNS lookup failed for {}:{}: {error}", config.host, config.port
-        )))?;
+        .map_err(|error| {
+            DbError::Connection(format!(
+                "SSH jump host DNS lookup failed for {}:{}: {error}",
+                config.host, config.port
+            ))
+        })?;
     let mut last_error = None;
     let mut jump = None;
     for address in addresses {
@@ -174,22 +185,29 @@ fn open_forwarding(
             Err(error) => last_error = Some(error),
         }
     }
-    let jump = jump.ok_or_else(|| DbError::Connection(format!(
-        "SSH jump host connection to {}:{} timed out or failed after {}s: {}",
-        config.host,
-        config.port,
-        timeout.as_secs(),
-        last_error.map(|error| error.to_string()).unwrap_or_else(|| "no address resolved".into())
-    )))?;
+    let jump = jump.ok_or_else(|| {
+        DbError::Connection(format!(
+            "SSH jump host connection to {}:{} timed out or failed after {}s: {}",
+            config.host,
+            config.port,
+            timeout.as_secs(),
+            last_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "no address resolved".into())
+        ))
+    })?;
     jump.set_read_timeout(Some(timeout)).ok();
     jump.set_write_timeout(Some(timeout)).ok();
     let mut session = Session::new()
         .map_err(|error| DbError::Connection(format!("SSH session failed: {error}")))?;
     prefer_known_host_key(&session, &config.host, config.port)?;
     session.set_tcp_stream(jump);
-    session
-        .handshake()
-        .map_err(|error| DbError::Connection(format!("SSH handshake failed after {}s: {error}", timeout.as_secs())))?;
+    session.handshake().map_err(|error| {
+        DbError::Connection(format!(
+            "SSH handshake failed after {}s: {error}",
+            timeout.as_secs()
+        ))
+    })?;
     verify_host_key(
         &session,
         &config.host,
@@ -219,14 +237,17 @@ fn prefer_known_host_key(session: &Session, host: &str, port: u16) -> Result<(),
     for line in contents.lines() {
         let mut parts = line.split_whitespace();
         let Some(hosts) = parts.next() else { continue };
-        let Some(algorithm) = parts.next() else { continue };
+        let Some(algorithm) = parts.next() else {
+            continue;
+        };
         if hosts.starts_with('|') {
             continue;
         }
-        let matches_host = hosts.split(',').any(|candidate| {
-            candidate == port_host || (port == 22 && candidate == plain_host)
-        });
-        if matches_host && is_supported_host_key_algorithm(algorithm)
+        let matches_host = hosts
+            .split(',')
+            .any(|candidate| candidate == port_host || (port == 22 && candidate == plain_host));
+        if matches_host
+            && is_supported_host_key_algorithm(algorithm)
             && !algorithms.iter().any(|existing| *existing == algorithm)
         {
             algorithms.push(algorithm);
@@ -235,9 +256,12 @@ fn prefer_known_host_key(session: &Session, host: &str, port: u16) -> Result<(),
     if !algorithms.is_empty() {
         session
             .method_pref(MethodType::HostKey, &algorithms.join(","))
-            .map_err(|error| DbError::Connection(format!(
-                "could not prefer the SSH key recorded in {}: {error}", path.display()
-            )))?;
+            .map_err(|error| {
+                DbError::Connection(format!(
+                    "could not prefer the SSH key recorded in {}: {error}",
+                    path.display()
+                ))
+            })?;
     }
     Ok(())
 }
@@ -299,20 +323,22 @@ fn verify_host_key(
                     "Added by Database4every1 after user confirmation",
                     key_type.into(),
                 )
-                .map_err(|error| DbError::Connection(format!("cannot add SSH host key: {error}")))?;
+                .map_err(|error| {
+                    DbError::Connection(format!("cannot add SSH host key: {error}"))
+                })?;
             known_hosts
                 .write_file(&known_hosts_path, KnownHostFileKind::OpenSSH)
-                .map_err(|error| DbError::Connection(format!("cannot update known_hosts: {error}")))?;
+                .map_err(|error| {
+                    DbError::Connection(format!("cannot update known_hosts: {error}"))
+                })?;
             Ok(())
         }
-        CheckResult::NotFound => {
-            Err(DbError::UnknownSshHostKey {
-                host: host.to_owned(),
-                port,
-                algorithm: host_key_algorithm(key_type).into(),
-                fingerprint: ssh_host_fingerprint(session),
-            })
-        }
+        CheckResult::NotFound => Err(DbError::UnknownSshHostKey {
+            host: host.to_owned(),
+            port,
+            algorithm: host_key_algorithm(key_type).into(),
+            fingerprint: ssh_host_fingerprint(session),
+        }),
         CheckResult::Mismatch => Err(DbError::Connection(format!(
             "SSH host key mismatch for {host}:{port}"
         ))),

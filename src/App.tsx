@@ -46,6 +46,7 @@ import {
   type SchemaTree,
 } from "./types/database";
 import { buildObjectPreviewQuery } from "./utils/queryTemplates";
+import { resolveConnectionConfig } from "./utils/connectionVariables";
 
 const INITIAL_CONNECTIONS: ConnectionSummary[] = [
   {
@@ -182,7 +183,20 @@ function App() {
   const dockviewApi = useRef<DockviewApi | undefined>(undefined);
   const queryOrdinal = useRef(0);
   const workspaceMutation = useRef(0);
+  const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const connectionAttempts = useRef(new Map<string, Promise<void>>());
+
+  const persistWorkspace = useCallback((workspace: {
+    hasInitializedDefaults: boolean;
+    groups: ConnectionGroup[];
+    connections: ConnectionSummary[];
+  }) => {
+    const save = workspaceSaveQueue.current
+      .catch(() => undefined)
+      .then(() => saveConnectionWorkspace(workspace));
+    workspaceSaveQueue.current = save;
+    return save;
+  }, []);
 
   const activeConnection = connections.find(
     (connection) => connection.id === activeConnectionId,
@@ -237,7 +251,7 @@ function App() {
       setSchemaLoading(true);
       setSchemaError(undefined);
       try {
-        await connectDatabase(connectionId, connection.config!);
+        await connectDatabase(connectionId, resolveConnectionConfig(connection.config!, groups));
       } catch (error) {
         const normalized = normalizeBackendError(error);
         if (normalized.code !== "CONNECTION_ALREADY_EXISTS") {
@@ -249,7 +263,7 @@ function App() {
     })().finally(() => connectionAttempts.current.delete(connectionId));
     connectionAttempts.current.set(connectionId, attempt);
     return attempt;
-  }, [connections, loadSchemaFor]);
+  }, [connections, groups, loadSchemaFor]);
 
   const selectConnection = useCallback((connectionId: string) => {
     setActiveConnectionId(connectionId);
@@ -286,10 +300,11 @@ function App() {
   useEffect(() => {
     if (!storageReady) return;
     const timeout = window.setTimeout(() => {
-      void saveConnectionWorkspace({ hasInitializedDefaults: true, groups, connections }).catch(() => undefined);
+      void persistWorkspace({ hasInitializedDefaults: true, groups, connections })
+        .catch((error) => setSchemaError(normalizeBackendError(error).message));
     }, 250);
     return () => window.clearTimeout(timeout);
-  }, [connections, groups, storageReady]);
+  }, [connections, groups, persistWorkspace, storageReady]);
 
   const addQueryTab = useCallback(() => {
     const api = dockviewApi.current;
@@ -390,7 +405,7 @@ function App() {
       if (connections.some((item) => item.id === summary.id)) {
         await disconnectDatabase(summary.id).catch(() => undefined);
       }
-      await connectDatabase(summary.id, config);
+      await connectDatabase(summary.id, resolveConnectionConfig(config, groups));
       setConnections((current) => {
         const index = current.findIndex((item) => item.id === summary.id);
         if (index < 0) return [...current, summary];
@@ -401,8 +416,30 @@ function App() {
       setActiveConnectionId(summary.id);
       await loadSchemaFor(summary.id);
     },
-    [connections, loadSchemaFor],
+    [connections, groups, loadSchemaFor],
   );
+
+  const updateGroups = useCallback(async (nextGroups: ConnectionGroup[]) => {
+    const changedGroupIds = new Set(
+      groups
+        .filter((group) => {
+          const next = nextGroups.find((candidate) => candidate.id === group.id);
+          return !next || JSON.stringify(next.variables ?? {}) !== JSON.stringify(group.variables ?? {});
+        })
+        .map((group) => group.id),
+    );
+    for (const connection of connections) {
+      if (connection.groupId && changedGroupIds.has(connection.groupId)) {
+        void disconnectDatabase(connection.id).catch(() => undefined);
+      }
+    }
+    setGroups(nextGroups);
+    await persistWorkspace({
+      hasInitializedDefaults: true,
+      groups: nextGroups,
+      connections,
+    });
+  }, [connections, groups, persistWorkspace]);
 
   const updateConnections = useCallback(
     (nextConnections: ConnectionSummary[]) => {
@@ -553,7 +590,7 @@ function App() {
                 const target = connection ?? activeConnection;
                 if (target) setConnectionModal(target);
               }}
-              onGroupsChange={setGroups}
+              onGroupsChange={updateGroups}
               onConnectionsChange={updateConnections}
               onDeleteConnection={(connection) => void deleteConnection(connection)}
               onRefreshConnection={(connectionId) => void connectAndLoadConnection(connectionId)}

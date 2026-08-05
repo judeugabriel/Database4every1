@@ -33,7 +33,7 @@ interface SchemaSidebarProps {
   onRefresh: () => void;
   onAddConnection: () => void;
   onEditConnection: (connection?: ConnectionSummary) => void;
-  onGroupsChange: (groups: ConnectionGroup[]) => void;
+  onGroupsChange: (groups: ConnectionGroup[]) => void | Promise<void>;
   onConnectionsChange: (connections: ConnectionSummary[]) => void;
   onDeleteConnection: (connection: ConnectionSummary) => void;
   onRefreshConnection: (connectionId: string) => void;
