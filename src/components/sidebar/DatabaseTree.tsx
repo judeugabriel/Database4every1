@@ -3,12 +3,14 @@ import {
   ChevronDown,
   ChevronRight,
   Database,
+  Copy,
   Folder,
   FolderPlus,
   MoreHorizontal,
   RefreshCw,
   Server,
   ShieldAlert,
+  Trash2,
   X,
 } from "lucide-react";
 import type { ConnectionGroup, ConnectionSummary } from "../../types/connection";
@@ -19,7 +21,7 @@ interface DatabaseTreeProps {
   connections: ConnectionSummary[];
   activeConnectionId: string;
   onSelectConnection: (id: string) => void;
-  onGroupsChange: (groups: ConnectionGroup[]) => void;
+  onGroupsChange: (groups: ConnectionGroup[]) => void | Promise<void>;
   onConnectionsChange: (connections: ConnectionSummary[]) => void;
   onDeleteConnection: (connection: ConnectionSummary) => void;
   onEditConnection: (connection: ConnectionSummary) => void;
@@ -79,9 +81,9 @@ export function DatabaseTree({
     );
   };
 
-  const saveGroup = (group: ConnectionGroup) => {
+  const saveGroup = async (group: ConnectionGroup) => {
     const exists = groups.some((item) => item.id === group.id);
-    onGroupsChange(exists ? groups.map((item) => (item.id === group.id ? group : item)) : [...groups, group]);
+    await onGroupsChange(exists ? groups.map((item) => (item.id === group.id ? group : item)) : [...groups, group]);
     setEditor(undefined);
   };
 
@@ -103,6 +105,34 @@ export function DatabaseTree({
           ),
     );
     setContext(undefined);
+  };
+
+  const duplicateGroup = (source: ConnectionGroup) => {
+    const groupId = `group-${crypto.randomUUID()}`;
+    const duplicate: ConnectionGroup = {
+      ...source,
+      id: groupId,
+      name: `${source.name} Copy`,
+      isExpanded: true,
+      variables: { ...source.variables },
+    };
+    const duplicatedConnections = connections
+      .filter((connection) => connection.groupId === source.id)
+      .map((connection) => {
+        const id = `connection-${crypto.randomUUID()}`;
+        return {
+          ...connection,
+          id,
+          groupId,
+          config: connection.config
+            ? { ...connection.config, id, groupId }
+            : connection.config,
+        };
+      });
+    onGroupsChange([...groups, duplicate]);
+    onConnectionsChange([...connections, ...duplicatedConnections]);
+    setContext(undefined);
+    setEditor(duplicate);
   };
 
   return (
@@ -200,6 +230,7 @@ export function DatabaseTree({
         >
           <button onClick={() => { setEditor(context.group); setContext(undefined); }}>Edit Group</button>
           <button onClick={() => { setEditor(context.group); setContext(undefined); }}>Rename</button>
+          <button onClick={() => duplicateGroup(context.group)}><Copy size={12} /> Duplicate Group and Connections</button>
           <div className="context-colors">
             <span>Change Color</span>
             {COLORS.map((color) => (
@@ -373,7 +404,7 @@ function ConnectionItem({
   );
 }
 
-function GroupEditor({ group, onSave, onClose }: { group: ConnectionGroup | null; onSave: (group: ConnectionGroup) => void; onClose: () => void }) {
+function GroupEditor({ group, onSave, onClose }: { group: ConnectionGroup | null; onSave: (group: ConnectionGroup) => void | Promise<void>; onClose: () => void }) {
   const [draft, setDraft] = useState(group ?? {
     id: `group-${crypto.randomUUID()}`,
     name: "New Group",
@@ -381,14 +412,71 @@ function GroupEditor({ group, onSave, onClose }: { group: ConnectionGroup | null
     icon: "Folder" as const,
     isExpanded: true,
   });
+  const [variableRows, setVariableRows] = useState(() =>
+    Object.entries(group?.variables ?? {}).map(([key, value]) => ({ id: crypto.randomUUID(), key, value })),
+  );
+  const [variableError, setVariableError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const keys = variableRows.map((row) => row.key.trim());
+    if (keys.some((key) => !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key))) {
+      setVariableError("Variable names must start with a letter or underscore.");
+      return;
+    }
+    if (new Set(keys).size !== keys.length) {
+      setVariableError("Variable names must be unique.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave({
+        ...draft,
+        variables: Object.fromEntries(variableRows.map((row) => [row.key.trim(), row.value])),
+      });
+    } catch (error) {
+      setVariableError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="group-editor-backdrop">
-      <form className="group-editor" onSubmit={(event) => { event.preventDefault(); onSave(draft); }}>
+      <form className="group-editor" onSubmit={submit}>
         <header><strong>{group ? "Edit group" : "Create group"}</strong><button type="button" onClick={onClose}><X size={14} /></button></header>
         <label><span>Group name</span><input autoFocus required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
         <label><span>Icon</span><div className="group-icon-options">{ICONS.map((icon) => { const Icon = groupIcon(icon); return <button type="button" key={icon} className={draft.icon === icon ? "active" : ""} onClick={() => setDraft({ ...draft, icon })}><Icon size={15} />{icon}</button>; })}</div></label>
         <label><span>Color</span><div className="group-color-options">{COLORS.map((color) => <button type="button" aria-label={color} key={color} className={draft.color === color ? "active" : ""} style={{ backgroundColor: color }} onClick={() => setDraft({ ...draft, color })} />)}</div></label>
-        <footer><button type="button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button">Save Group</button></footer>
+        <div className="group-variables">
+          <div className="group-variables-header">
+            <span>Environment variables</span>
+            <button type="button" onClick={() => {
+              setVariableRows((rows) => [...rows, { id: crypto.randomUUID(), key: "", value: "" }]);
+              setVariableError(undefined);
+            }}><FolderPlus size={12} /> Add variable</button>
+          </div>
+          <p>Use these values in grouped connections as <code>{"{{variable}}"}</code>.</p>
+          <div className="group-variable-list">
+            {variableRows.map((row) => (
+              <div className="group-variable-row" key={row.id}>
+                <input aria-label="Variable name" placeholder="key" value={row.key} onChange={(event) => {
+                  const key = event.target.value;
+                  setVariableRows((rows) => rows.map((item) => item.id === row.id ? { ...item, key } : item));
+                  setVariableError(undefined);
+                }} />
+                <span>→</span>
+                <input aria-label={`Value for ${row.key || "variable"}`} placeholder="value" value={row.value} onChange={(event) => {
+                  const value = event.target.value;
+                  setVariableRows((rows) => rows.map((item) => item.id === row.id ? { ...item, value } : item));
+                }} />
+                <button type="button" title="Remove variable" onClick={() => setVariableRows((rows) => rows.filter((item) => item.id !== row.id))}><Trash2 size={13} /></button>
+              </div>
+            ))}
+            {variableRows.length === 0 && <small>No variables configured.</small>}
+          </div>
+          {variableError && <div className="group-variable-error">{variableError}</div>}
+        </div>
+        <footer><button type="button" onClick={onClose} disabled={saving}>Cancel</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "Saving…" : "Save Group"}</button></footer>
       </form>
     </div>
   );

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -17,6 +17,8 @@ pub struct ConnectionGroup {
     pub color: Option<String>,
     pub icon: Option<String>,
     pub is_expanded: Option<bool>,
+    #[serde(default)]
+    pub variables: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

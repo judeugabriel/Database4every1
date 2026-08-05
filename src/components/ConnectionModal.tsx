@@ -25,6 +25,7 @@ import type {
   SslMode,
 } from "../types/database";
 import { ElasticsearchForm } from "./connections/ElasticsearchForm";
+import { resolveConnectionConfig } from "../utils/connectionVariables";
 
 interface ConnectionModalProps {
   connection?: ConnectionSummary;
@@ -105,7 +106,7 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
     setMessage("Opening a secure connection…");
     let connected = false;
     try {
-      await connectDatabase(temporaryId, effectiveConfig);
+      await connectDatabase(temporaryId, resolveConnectionConfig(effectiveConfig, groups));
       connected = true;
       setTestStatus("success");
       setMessage("Connection established successfully");
@@ -146,6 +147,7 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
   };
 
   const isFileDatabase = config.db_type === "sqlite";
+  const selectedGroup = groups.find((group) => group.id === config.groupId);
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -175,7 +177,12 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
                     onChange={(event) => {
                       const db_type = event.target.value as DatabaseEngine;
                       const port = ENGINES.find((item) => item.value === db_type)?.port ?? 0;
-                      setConfig((current) => ({ ...current, db_type, port }));
+                      setConfig((current) => ({
+                        ...current,
+                        db_type,
+                        port,
+                        ssl_mode: db_type === "redis" ? "disable" : current.ssl_mode,
+                      }));
                       setTestStatus("idle");
                     }}
                   >
@@ -212,6 +219,12 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
                   <ChevronDown size={13} />
                 </div>
               </Field>
+              {selectedGroup && Object.keys(selectedGroup.variables ?? {}).length > 0 && (
+                <div className="connection-variable-hint form-wide">
+                  <span>Available:</span>
+                  {Object.keys(selectedGroup.variables ?? {}).map((key) => <code key={key}>{`{{${key}}}`}</code>)}
+                </div>
+              )}
               <Field label={isFileDatabase ? "Database file" : "Host"} wide={isFileDatabase}>
                 <input
                   required
@@ -224,8 +237,9 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
               </Field>
               {!isFileDatabase && (
                 <Field label="Port">
-                  <input type="number" min="1" max="65535" required value={config.port}
-                    onChange={(event) => setConfig((current) => ({ ...current, port: Number(event.target.value) }))} />
+                  <input type="text" inputMode="numeric" required value={config.port}
+                    placeholder="5432 or {{port}}"
+                    onChange={(event) => setConfig((current) => ({ ...current, port: event.target.value }))} />
                 </Field>
               )}
               {!isFileDatabase && <Field label="Database"><input value={config.database ?? ""}
@@ -262,14 +276,15 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
                 <div className="form-grid ssh-fields">
                   <Field label="Jump host"><input required value={config.ssh_tunnel_config?.host ?? ""}
                     onChange={(event) => updateSsh(setConfig, { host: event.target.value })} /></Field>
-                  <Field label="SSH port"><input type="number" min="1" max="65535" required
+                  <Field label="SSH port"><input type="text" inputMode="numeric" required
                     value={config.ssh_tunnel_config?.port ?? 22}
-                    onChange={(event) => updateSsh(setConfig, { port: Number(event.target.value) })} /></Field>
+                    placeholder="22 or {{ssh_port}}"
+                    onChange={(event) => updateSsh(setConfig, { port: event.target.value })} /></Field>
                   <Field label="SSH user" wide><input required value={config.ssh_tunnel_config?.username ?? ""}
                     onChange={(event) => updateSsh(setConfig, { username: event.target.value })} /></Field>
-                  <Field label="Connect timeout (seconds)" wide><input type="number" min="1" max="300" required
+                  <Field label="Connect timeout (seconds)" wide><input type="text" inputMode="numeric" required
                     value={config.ssh_tunnel_config?.connect_timeout_secs ?? 15}
-                    onChange={(event) => updateSsh(setConfig, { connect_timeout_secs: Number(event.target.value) })} /></Field>
+                    onChange={(event) => updateSsh(setConfig, { connect_timeout_secs: event.target.value })} /></Field>
                   <div className="auth-selector form-wide">
                     <button type="button" className={sshAuth === "key" ? "active" : ""} onClick={() => setSshAuth("key")}>
                       <KeyRound size={13} /> Private key

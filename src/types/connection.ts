@@ -4,6 +4,7 @@ export interface ConnectionGroup {
   color?: string;
   icon?: "Folder" | "Server" | "ShieldAlert" | "Database";
   isExpanded?: boolean;
+  variables?: Record<string, string>;
 }
 
 export type DatabaseEngine =
@@ -18,12 +19,12 @@ export type SslMode = "disable" | "prefer" | "require" | "verify_ca" | "verify_f
 
 export interface SshTunnelConfig {
   host: string;
-  port: number;
+  port: number | string;
   username: string;
   password?: string;
   private_key_path?: string;
   private_key_passphrase?: string;
-  connect_timeout_secs?: number;
+  connect_timeout_secs?: number | string;
   /** Transient trust-on-first-use approval; do not persist this value. */
   accept_new_host_key?: boolean;
   expected_host_key_fingerprint?: string;
@@ -33,7 +34,7 @@ export interface ConnectionConfig {
   id: string;
   groupId?: string;
   host: string;
-  port: number;
+  port: number | string;
   username?: string;
   password?: string;
   database?: string;

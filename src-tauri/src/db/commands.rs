@@ -66,7 +66,12 @@ pub enum ErrorCode {
 impl From<DbError> for CommandError {
     fn from(error: DbError) -> Self {
         let details = match &error {
-            DbError::UnknownSshHostKey { host, port, algorithm, fingerprint } => Some(serde_json::json!({
+            DbError::UnknownSshHostKey {
+                host,
+                port,
+                algorithm,
+                fingerprint,
+            } => Some(serde_json::json!({
                 "host": host,
                 "port": port,
                 "algorithm": algorithm,
@@ -101,6 +106,20 @@ pub async fn connect_db(
     config: ConnectionConfig,
     state: State<'_, DatabaseState>,
 ) -> Result<(), CommandError> {
+    let connection_timeout = std::time::Duration::from_secs(
+        config
+            .ssh_tunnel_config
+            .as_ref()
+            .and_then(|ssh| ssh.connect_timeout_secs)
+            .unwrap_or(15)
+            .clamp(1, 300)
+            .saturating_mul(if config.ssh_tunnel_config.is_some() {
+                2
+            } else {
+                1
+            })
+            .saturating_add(5),
+    );
     let driver: Box<dyn DatabaseDriver + Send + Sync> = match &config.db_type {
         DatabaseType::PostgreSql => Box::new(PostgresDriver::new()),
         DatabaseType::MySql => Box::new(MySqlDriver::new()),
@@ -110,8 +129,18 @@ pub async fn connect_db(
         other => return Err(DbError::UnsupportedDatabase(format!("{other:?}")).into()),
     };
 
-    driver.connect(&config).await?;
-    if !driver.test_connection().await? {
+    let connected = tokio::time::timeout(connection_timeout, async {
+        driver.connect(&config).await?;
+        driver.test_connection().await
+    })
+    .await
+    .map_err(|_| {
+        DbError::Connection(format!(
+            "connection attempt timed out after {}s",
+            connection_timeout.as_secs()
+        ))
+    })??;
+    if !connected {
         return Err(DbError::Connection("connection test returned false".into()).into());
     }
     state

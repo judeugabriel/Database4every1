@@ -176,12 +176,9 @@ impl DatabaseDriver for PostgresDriver {
         .fetch_all(&pool)
         .await
         .map_err(schema_error)?;
-        let options = self
-            .connect_options
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| DbError::Connection("PostgreSQL connection options are missing".into()))?;
+        let options = self.connect_options.read().await.clone().ok_or_else(|| {
+            DbError::Connection("PostgreSQL connection options are missing".into())
+        })?;
         let current_database: String = sqlx::query_scalar("SELECT current_database()")
             .fetch_one(&pool)
             .await
@@ -238,7 +235,7 @@ fn postgres_query_target(query: &str) -> (Option<&str>, &str) {
 
 async fn fetch_postgres_schemas(pool: &PgPool) -> Result<Vec<SchemaNode>, DbError> {
     let rows = sqlx::query(
-            r#"SELECT c.table_schema, c.table_name, t.table_type,
+        r#"SELECT c.table_schema, c.table_name, t.table_type,
                       c.column_name, c.data_type, c.is_nullable
                FROM information_schema.columns c
                JOIN information_schema.tables t
@@ -247,35 +244,35 @@ async fn fetch_postgres_schemas(pool: &PgPool) -> Result<Vec<SchemaNode>, DbErro
                 AND t.table_name = c.table_name
                WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
                ORDER BY c.table_schema, c.table_name, c.ordinal_position"#,
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(schema_error)?;
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(schema_error)?;
 
-        let mut schemas = Vec::new();
-        for row in rows {
-            let schema_name: String = row.try_get("table_schema").map_err(schema_error)?;
-            let object_name: String = row.try_get("table_name").map_err(schema_error)?;
-            let object_type: String = row.try_get("table_type").map_err(schema_error)?;
-            let column = ColumnMeta {
-                name: row.try_get("column_name").map_err(schema_error)?,
-                data_type: row.try_get("data_type").map_err(schema_error)?,
-                nullable: row
-                    .try_get::<String, _>("is_nullable")
-                    .map_err(schema_error)?
-                    == "YES",
-            };
-            let schema = schema_mut(&mut schemas, &schema_name);
-            if object_type == "VIEW" {
-                view_mut(&mut schema.views, &object_name)
-                    .columns
-                    .push(column);
-            } else {
-                table_mut(&mut schema.tables, &object_name)
-                    .columns
-                    .push(column);
-            }
+    let mut schemas = Vec::new();
+    for row in rows {
+        let schema_name: String = row.try_get("table_schema").map_err(schema_error)?;
+        let object_name: String = row.try_get("table_name").map_err(schema_error)?;
+        let object_type: String = row.try_get("table_type").map_err(schema_error)?;
+        let column = ColumnMeta {
+            name: row.try_get("column_name").map_err(schema_error)?,
+            data_type: row.try_get("data_type").map_err(schema_error)?,
+            nullable: row
+                .try_get::<String, _>("is_nullable")
+                .map_err(schema_error)?
+                == "YES",
+        };
+        let schema = schema_mut(&mut schemas, &schema_name);
+        if object_type == "VIEW" {
+            view_mut(&mut schema.views, &object_name)
+                .columns
+                .push(column);
+        } else {
+            table_mut(&mut schema.tables, &object_name)
+                .columns
+                .push(column);
         }
+    }
 
     Ok(schemas)
 }
@@ -372,6 +369,67 @@ fn row_to_json(row: &PgRow) -> Result<Vec<Value>, DbError> {
                 "BYTEA" => {
                     json!(BASE64.encode(row.try_get::<Vec<u8>, _>(index).map_err(query_error)?))
                 }
+                "BOOL[]" => json!(row
+                    .try_get::<Vec<Option<bool>>, _>(index)
+                    .map_err(query_error)?),
+                "INT2[]" => json!(row
+                    .try_get::<Vec<Option<i16>>, _>(index)
+                    .map_err(query_error)?),
+                "INT4[]" => json!(row
+                    .try_get::<Vec<Option<i32>>, _>(index)
+                    .map_err(query_error)?),
+                "INT8[]" => json!(row
+                    .try_get::<Vec<Option<i64>>, _>(index)
+                    .map_err(query_error)?),
+                "FLOAT4[]" => float_array_json(
+                    row.try_get::<Vec<Option<f32>>, _>(index)
+                        .map_err(query_error)?
+                        .into_iter()
+                        .map(|value| value.map(f64::from)),
+                ),
+                "FLOAT8[]" => float_array_json(
+                    row.try_get::<Vec<Option<f64>>, _>(index)
+                        .map_err(query_error)?
+                        .into_iter(),
+                ),
+                "NUMERIC[]" => display_array_json(
+                    row.try_get::<Vec<Option<Decimal>>, _>(index)
+                        .map_err(query_error)?,
+                ),
+                "TEXT[]" | "VARCHAR[]" | "BPCHAR[]" | "NAME[]" => json!(row
+                    .try_get::<Vec<Option<String>>, _>(index)
+                    .map_err(query_error)?),
+                "JSON[]" | "JSONB[]" => json!(row
+                    .try_get::<Vec<Option<Value>>, _>(index)
+                    .map_err(query_error)?),
+                "UUID[]" => display_array_json(
+                    row.try_get::<Vec<Option<Uuid>>, _>(index)
+                        .map_err(query_error)?,
+                ),
+                "DATE[]" => display_array_json(
+                    row.try_get::<Vec<Option<NaiveDate>>, _>(index)
+                        .map_err(query_error)?,
+                ),
+                "TIME[]" => display_array_json(
+                    row.try_get::<Vec<Option<NaiveTime>>, _>(index)
+                        .map_err(query_error)?,
+                ),
+                "TIMESTAMP[]" => display_array_json(
+                    row.try_get::<Vec<Option<NaiveDateTime>>, _>(index)
+                        .map_err(query_error)?,
+                ),
+                "TIMESTAMPTZ[]" => json!(row
+                    .try_get::<Vec<Option<DateTime<Utc>>>, _>(index)
+                    .map_err(query_error)?
+                    .into_iter()
+                    .map(|value| value.map(|item| item.to_rfc3339()))
+                    .collect::<Vec<_>>()),
+                "BYTEA[]" => json!(row
+                    .try_get::<Vec<Option<Vec<u8>>>, _>(index)
+                    .map_err(query_error)?
+                    .into_iter()
+                    .map(|value| value.map(|bytes| BASE64.encode(bytes)))
+                    .collect::<Vec<_>>()),
                 _ => json!(row
                     .try_get::<String, _>(index)
                     .map_err(|_| unsupported_type(column.type_info().name(), column.name()))?),
@@ -379,6 +437,24 @@ fn row_to_json(row: &PgRow) -> Result<Vec<Value>, DbError> {
             Ok(value)
         })
         .collect()
+}
+
+fn display_array_json<T: std::fmt::Display>(values: Vec<Option<T>>) -> Value {
+    Value::Array(
+        values
+            .into_iter()
+            .map(|value| value.map_or(Value::Null, |item| json!(item.to_string())))
+            .collect(),
+    )
+}
+
+fn float_array_json(values: impl IntoIterator<Item = Option<f64>>) -> Value {
+    Value::Array(
+        values
+            .into_iter()
+            .map(|value| value.map_or(Value::Null, float_json))
+            .collect(),
+    )
 }
 
 fn float_json(value: f64) -> Value {
