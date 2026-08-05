@@ -248,6 +248,26 @@ async fn discover_databases(
         .get_multiplexed_async_connection_with_config(async_config)
         .await
         .map_err(schema_error)?;
+    // INFO keyspace returns only databases that contain keys and avoids doing
+    // up to hundreds of empty SCANs over a higher-latency SSH tunnel.
+    if let Ok(keyspace) = redis::cmd("INFO")
+        .arg("keyspace")
+        .query_async::<String>(&mut client)
+        .await
+    {
+        let mut databases: Vec<i64> = keyspace
+            .lines()
+            .filter_map(|line| {
+                let database = line.strip_prefix("db")?.split_once(':')?.0;
+                database.parse().ok()
+            })
+            .collect();
+        databases.sort_unstable();
+        databases.dedup();
+        if !databases.is_empty() {
+            return Ok(databases);
+        }
+    }
     let configured_count = redis::cmd("CONFIG")
         .arg("GET")
         .arg("databases")
@@ -318,12 +338,18 @@ async fn scan_database(
     keys.truncate(5_000);
     let mut grouped: BTreeMap<String, Vec<CollectionNode>> = BTreeMap::new();
     let mut collections = Vec::new();
-    for key in keys {
-        let data_type: String = redis::cmd("TYPE")
-            .arg(&key)
-            .query_async(client)
-            .await
-            .map_err(schema_error)?;
+    // Resolve all types in one pipelined request. The former per-key loop was
+    // especially costly through SSH (up to 5,000 request/response round trips).
+    let mut type_pipeline = redis::pipe();
+    for key in &keys {
+        type_pipeline.cmd("TYPE").arg(key);
+    }
+    let data_types: Vec<String> = if keys.is_empty() {
+        Vec::new()
+    } else {
+        type_pipeline.query_async(client).await.map_err(schema_error)?
+    };
+    for (key, data_type) in keys.into_iter().zip(data_types) {
         let collection = CollectionNode {
             name: key,
             columns: vec![ColumnMeta {

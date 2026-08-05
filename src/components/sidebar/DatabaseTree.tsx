@@ -25,6 +25,7 @@ interface DatabaseTreeProps {
   onConnectionsChange: (connections: ConnectionSummary[]) => void;
   onDeleteConnection: (connection: ConnectionSummary) => void;
   onEditConnection: (connection: ConnectionSummary) => void;
+  onDuplicateConnection: (connection: ConnectionSummary) => void;
   onRefreshConnection: (connectionId: string) => void;
 }
 
@@ -45,6 +46,7 @@ export function DatabaseTree({
   onConnectionsChange,
   onDeleteConnection,
   onEditConnection,
+  onDuplicateConnection,
   onRefreshConnection,
 }: DatabaseTreeProps) {
   const [editor, setEditor] = useState<ConnectionGroup | null>();
@@ -265,6 +267,14 @@ export function DatabaseTree({
             }}
           >
             Edit Connection
+          </button>
+          <button
+            onClick={() => {
+              onDuplicateConnection(connectionContext.connection);
+              setConnectionContext(undefined);
+            }}
+          >
+            <Copy size={12} /> Duplicate Connection
           </button>
           <button
             className="danger"

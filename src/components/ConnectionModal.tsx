@@ -29,6 +29,7 @@ import { resolveConnectionConfig } from "../utils/connectionVariables";
 
 interface ConnectionModalProps {
   connection?: ConnectionSummary;
+  duplicate?: boolean;
   groups: ConnectionGroup[];
   onClose: () => void;
   onDelete?: () => Promise<boolean>;
@@ -49,8 +50,9 @@ const ENGINES: Array<{ value: DatabaseEngine; label: string; port: number; accen
 
 type TestStatus = "idle" | "testing" | "success" | "error";
 
-export function ConnectionModal({ connection, groups, onClose, onSave, onDelete }: ConnectionModalProps) {
-  const initial = useMemo(() => initialForm(connection), [connection]);
+export function ConnectionModal({ connection, duplicate = false, groups, onClose, onSave, onDelete }: ConnectionModalProps) {
+  const initial = useMemo(() => initialForm(connection, duplicate), [connection, duplicate]);
+  const isEditing = Boolean(connection) && !duplicate;
   const [label, setLabel] = useState(initial.label);
   const [config, setConfig] = useState(initial.config);
   const [sshEnabled, setSshEnabled] = useState(Boolean(initial.config.ssh_tunnel_config));
@@ -125,7 +127,7 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
     setMessage(undefined);
     try {
       const engine = ENGINES.find((item) => item.value === effectiveConfig.db_type)!;
-      const connectionId = connection?.id ?? effectiveConfig.id;
+      const connectionId = isEditing ? connection!.id : effectiveConfig.id;
       await onSave(
         {
           id: connectionId,
@@ -156,7 +158,7 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
           <span className="modal-icon"><Database size={18} /></span>
           <div>
             <span className="eyebrow">Data source</span>
-            <h2>{connection ? "Edit connection" : "New connection"}</h2>
+            <h2>{isEditing ? "Edit connection" : duplicate ? "Duplicate connection" : "New connection"}</h2>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
             <X size={17} />
@@ -320,7 +322,7 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
         </div>
 
         <footer className="modal-footer">
-          {connection && onDelete && (
+          {isEditing && onDelete && (
             <button
               type="button"
               className="secondary-button danger-button"
@@ -341,7 +343,7 @@ export function ConnectionModal({ connection, groups, onClose, onSave, onDelete 
           <span />
           <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
           <button type="submit" className="primary-button" disabled={saving || !label.trim()}>
-            {saving && <LoaderCircle size={14} />} {connection ? "Save changes" : "Add connection"}
+            {saving && <LoaderCircle size={14} />} {isEditing ? "Save changes" : duplicate ? "Add duplicate" : "Add connection"}
           </button>
         </footer>
       </form>
@@ -369,15 +371,16 @@ function updateSsh(
   }));
 }
 
-function initialForm(connection?: ConnectionSummary): {
+function initialForm(connection?: ConnectionSummary, duplicate = false): {
   label: string;
   config: ConnectionConfig;
 } {
-  const id = connection?.id ?? `connection-${crypto.randomUUID()}`;
+  const id = connection && !duplicate ? connection.id : `connection-${crypto.randomUUID()}`;
   return {
-    label: connection?.label ?? "Local PostgreSQL",
+    label: connection ? `${connection.label}${duplicate ? " Copy" : ""}` : "Local PostgreSQL",
     config: connection?.config ? {
       ...connection.config,
+      id,
       groupId: connection.groupId ?? connection.config.groupId,
     } : {
       id,

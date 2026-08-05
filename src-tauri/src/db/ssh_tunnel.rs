@@ -50,10 +50,10 @@ impl SshTunnel {
         destination_port: u16,
     ) -> Result<Self, DbError> {
         validate_ssh_config(&config)?;
-        // Validate the complete route up front. Previously the listener was
-        // returned immediately and authentication/forwarding failures inside
-        // worker threads were silently discarded.
-        test_forwarding(&config, &destination_host, destination_port)?;
+        // Validate the complete route up front, then reuse that authenticated
+        // session/channel for the first local client. Opening a throwaway probe
+        // and a second SSH session made Redis-over-SSH noticeably slow.
+        let initial_forward = open_forwarding(&config, &destination_host, destination_port)?;
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| DbError::Connection(format!("cannot bind SSH tunnel: {error}")))?;
         let local_port = listener
@@ -68,14 +68,21 @@ impl SshTunnel {
         let accept_thread = thread::Builder::new()
             .name(format!("ssh-tunnel-{local_port}"))
             .spawn(move || {
+                let mut initial_forward = Some(initial_forward);
                 while !worker_stopped.load(Ordering::Relaxed) {
                     match listener.accept() {
                         Ok((local, _)) => {
-                            let config = config.clone();
-                            let host = destination_host.clone();
-                            thread::spawn(move || {
-                                let _ = forward_connection(local, &config, &host, destination_port);
-                            });
+                            if let Some((session, channel)) = initial_forward.take() {
+                                thread::spawn(move || {
+                                    let _ = relay_forward_connection(local, session, channel);
+                                });
+                            } else {
+                                let config = config.clone();
+                                let host = destination_host.clone();
+                                thread::spawn(move || {
+                                    let _ = forward_connection(local, &config, &host, destination_port);
+                                });
+                            }
                         }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(20));
@@ -132,12 +139,20 @@ fn validate_ssh_config(config: &SshTunnelConfig) -> Result<(), DbError> {
 }
 
 fn forward_connection(
-    mut local: TcpStream,
+    local: TcpStream,
     config: &SshTunnelConfig,
     destination_host: &str,
     destination_port: u16,
 ) -> Result<(), DbError> {
-    let (session, mut channel) = open_forwarding(config, destination_host, destination_port)?;
+    let (session, channel) = open_forwarding(config, destination_host, destination_port)?;
+    relay_forward_connection(local, session, channel)
+}
+
+fn relay_forward_connection(
+    mut local: TcpStream,
+    session: Session,
+    mut channel: ssh2::Channel,
+) -> Result<(), DbError> {
     session.set_blocking(false);
     local
         .set_nonblocking(true)
@@ -145,18 +160,6 @@ fn forward_connection(
     relay(&mut local, &mut channel)?;
     let _ = channel.close();
     let _ = local.shutdown(Shutdown::Both);
-    Ok(())
-}
-
-fn test_forwarding(
-    config: &SshTunnelConfig,
-    destination_host: &str,
-    destination_port: u16,
-) -> Result<(), DbError> {
-    // Successfully opening the direct-tcpip channel proves the route. Waiting
-    // for a remote close acknowledgement can block on Redis endpoints, which
-    // are designed to keep connections open until the client disconnects.
-    let (_session, _channel) = open_forwarding(config, destination_host, destination_port)?;
     Ok(())
 }
 

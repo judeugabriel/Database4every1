@@ -162,7 +162,10 @@ function App() {
   const [groups, setGroups] = useState(INITIAL_GROUPS);
   const [storageReady, setStorageReady] = useState(false);
   const [activeConnectionId, setActiveConnectionId] = useState(INITIAL_CONNECTIONS[0].id);
-  const [connectionModal, setConnectionModal] = useState<ConnectionSummary | null>();
+  const [connectionModal, setConnectionModal] = useState<{
+    connection?: ConnectionSummary;
+    duplicate?: boolean;
+  }>();
   const [schemaByConnection, setSchemaByConnection] = useState<Record<string, SchemaTree>>({
     [INITIAL_CONNECTIONS[0].id]: PREVIEW_SCHEMA,
   });
@@ -476,17 +479,17 @@ function App() {
       }
       const remaining = connections.filter((item) => item.id !== connection.id);
       setConnections(remaining);
-      const nextActiveId = deletingActive ? (remaining[0]?.id ?? "") : activeConnectionId;
-      if (deletingActive) setActiveConnectionId(nextActiveId);
+      // Deletion is cleanup only. Do not select/connect/test another data
+      // source as a side effect of removing the active connection.
+      if (deletingActive) setActiveConnectionId("");
       await saveConnectionWorkspace({
         hasInitializedDefaults: true,
         groups,
         connections: remaining,
       });
-      if (nextActiveId) await loadSchemaFor(nextActiveId);
       return true;
     },
-    [activeConnectionId, connections, groups, loadSchemaFor],
+    [activeConnectionId, connections, groups],
   );
 
   return (
@@ -567,11 +570,12 @@ function App() {
               error={schemaError}
               onSelectConnection={selectConnection}
               onRefresh={() => void loadSchema()}
-              onAddConnection={() => setConnectionModal(null)}
+              onAddConnection={() => setConnectionModal({})}
               onEditConnection={(connection) => {
                 const target = connection ?? activeConnection;
-                if (target) setConnectionModal(target);
+                if (target) setConnectionModal({ connection: target });
               }}
+              onDuplicateConnection={(connection) => setConnectionModal({ connection, duplicate: true })}
               onGroupsChange={updateGroups}
               onConnectionsChange={updateConnections}
               onDeleteConnection={(connection) => void deleteConnection(connection)}
@@ -592,11 +596,14 @@ function App() {
         </div>
         {connectionModal !== undefined && (
           <ConnectionModal
-            connection={connectionModal ?? undefined}
+            connection={connectionModal.connection}
+            duplicate={connectionModal.duplicate}
             groups={groups}
             onClose={() => setConnectionModal(undefined)}
             onSave={saveConnection}
-            onDelete={connectionModal ? () => deleteConnection(connectionModal) : undefined}
+            onDelete={connectionModal.connection && !connectionModal.duplicate
+              ? () => deleteConnection(connectionModal.connection!)
+              : undefined}
           />
         )}
         {settingsOpen && (
