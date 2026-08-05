@@ -47,6 +47,9 @@ mongodb = "3.8"
 elasticsearch = { version = "9.1.0-alpha.1", default-features = false, features = ["rustls-tls"] }
 url = "2"
 ssh2 = "0.9.6"
+# libssh2 otherwise discovers Homebrew OpenSSL on macOS and leaves the app
+# linked to /opt/homebrew. Vendoring makes release bundles self-contained.
+openssl-sys = { version = "0.9", features = ["vendored"] }
 dirs = "6"
 redis = { version = "1.5.0", default-features = false, features = ["tokio-comp", "tokio-rustls-comp", "tls-rustls-insecure"] }
 shell-words = "1.1.1"
