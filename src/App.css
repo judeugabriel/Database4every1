@@ -1821,6 +1821,76 @@ button {
   border: 0 !important;
 }
 
+.grid-cell-context-menu {
+  position: fixed;
+  z-index: 1600;
+  width: 184px;
+  padding: 4px;
+  border: 1px solid #35424e;
+  border-radius: 6px;
+  background: #171e27;
+  box-shadow: 0 12px 32px #05080dcc;
+  pointer-events: auto;
+}
+
+.grid-cell-context-menu button {
+  width: 100%;
+  height: 29px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  color: #c1cad3;
+  background: transparent;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.grid-cell-context-menu button:hover:not(:disabled) { background: #26313c; }
+.grid-cell-context-menu button.danger { color: #ef9aa0; }
+.grid-cell-context-menu button:disabled { opacity: .38; cursor: not-allowed; }
+
+.grid-cell-editor {
+  position: fixed;
+  z-index: 1650;
+  width: min(330px, calc(100vw - 16px));
+  padding: 9px;
+  border: 1px solid #3c4b58;
+  border-radius: 7px;
+  background: #171e27;
+  box-shadow: 0 14px 38px #05080ddd;
+  pointer-events: auto;
+}
+
+.grid-cell-editor label {
+  display: block;
+  margin-bottom: 6px;
+  color: #aeb9c3;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.grid-cell-editor textarea {
+  width: 100%;
+  height: 108px;
+  resize: vertical;
+  padding: 7px;
+  border: 1px solid #35434f;
+  border-radius: 4px;
+  outline: none;
+  color: #d5dde4;
+  background: #0d1319;
+  font: 11px/1.45 'SFMono-Regular', Consolas, monospace;
+}
+
+.grid-cell-editor textarea:focus { border-color: #58c9a8; }
+.grid-cell-editor > div { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.grid-cell-editor button { height: 25px; padding: 0 10px; border: 1px solid #35434f; border-radius: 4px; color: #aeb9c3; background: #202933; cursor: pointer; }
+.grid-cell-editor button.primary { border-color: #3b8c75; color: #e5fff7; background: #246b57; }
+
 .value-inspector {
   position: fixed;
   z-index: 50;
@@ -2030,6 +2100,39 @@ button {
   min-width: 82px;
   color: #c0cad3;
   text-align: center;
+}
+
+.pending-change-count {
+  padding: 2px 6px;
+  border-radius: 8px;
+  color: #e8bd76;
+  background: #3a2b17;
+  font-weight: 650;
+}
+
+.grid-edit-hint {
+  margin-left: 7px;
+  color: #65a996;
+  font-size: 9px;
+}
+
+.pagination-bar .commit-grid-changes {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-color: #3b8c75;
+  color: #dffff5;
+  background: #246b57;
+}
+
+.pagination-bar .commit-grid-changes:hover:not(:disabled) {
+  background: #2d8069;
+}
+
+.pagination-bar .cancel-grid-changes {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .settings-layer {

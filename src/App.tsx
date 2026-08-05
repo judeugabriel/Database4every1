@@ -337,6 +337,7 @@ function App() {
           ordinal,
           connection: activeConnection,
           tabColor: queryTabColor(activeConnection, groups),
+          editableTarget: activeConnection ? { name, kind: _kind, databaseName } : undefined,
           initialQuery: buildObjectPreviewQuery(activeConnection?.engine, name, limit, databaseName),
           autoRun: true,
         },

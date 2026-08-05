@@ -5,10 +5,13 @@ import {
   Rows3,
   TerminalSquare,
   Download,
+  Save,
+  Undo2,
 } from "lucide-react";
 import type { BackendError, QueryResult } from "../../types/database";
 import { GlideResultsGrid, type GridSort } from "./GlideResultsGrid";
 import { ExportResultsModal } from "./ExportResultsModal";
+import type { GridDataChange } from "../QueryDataGrid";
 
 export interface QueryLogEntry {
   timestamp: string;
@@ -35,6 +38,12 @@ interface QueryResultsPanelProps {
   sort?: GridSort;
   onSortChange: (sort: GridSort | undefined) => void;
   onPageChange: (page: number) => void;
+  editable: boolean;
+  pendingChanges: GridDataChange[];
+  onChangesChange: (changes: GridDataChange[]) => void;
+  onCommitChanges: () => void;
+  onCancelChanges: () => void;
+  editResetVersion: number;
 }
 
 export function QueryResultsPanel({
@@ -52,6 +61,12 @@ export function QueryResultsPanel({
   sort,
   onSortChange,
   onPageChange,
+  editable,
+  pendingChanges,
+  onChangesChange,
+  onCommitChanges,
+  onCancelChanges,
+  editResetVersion,
 }: QueryResultsPanelProps) {
   const [tab, setTab] = useState<"results" | "output">("results");
   const [exportOpen, setExportOpen] = useState(false);
@@ -88,12 +103,12 @@ export function QueryResultsPanel({
       </div>
 
       {tab === "results" ? (
-        <ResultsView result={result} error={error} running={running} hasMore={hasMore} onLoadMore={onLoadMore} sort={sort} onSortChange={onSortChange} />
+        <ResultsView result={result} error={error} running={running} hasMore={hasMore} onLoadMore={onLoadMore} sort={sort} onSortChange={onSortChange} editable={editable} onChangesChange={onChangesChange} editResetVersion={editResetVersion} />
       ) : (
         <OutputView result={result} error={error} logs={logs} running={running} />
       )}
       {tab === "results" && result && (
-        <PaginationBar result={result} page={page} limit={limit} running={running} onPageChange={onPageChange} />
+        <PaginationBar result={result} page={page} limit={limit} running={running} onPageChange={onPageChange} pendingChanges={pendingChanges} onCommitChanges={onCommitChanges} onCancelChanges={onCancelChanges} />
       )}
       {exportOpen && result && <ExportResultsModal result={result} loadAll={onExportAll} onClose={() => setExportOpen(false)} />}
     </>
@@ -108,22 +123,28 @@ function ResultsView({
   onLoadMore,
   sort,
   onSortChange,
-}: Pick<QueryResultsPanelProps, "result" | "error" | "running" | "hasMore" | "onLoadMore" | "sort" | "onSortChange">) {
+  editable,
+  onChangesChange,
+  editResetVersion,
+}: Pick<QueryResultsPanelProps, "result" | "error" | "running" | "hasMore" | "onLoadMore" | "sort" | "onSortChange" | "editable" | "onChangesChange" | "editResetVersion">) {
   if (error) {
     return <div className="result-message error-message"><AlertCircle size={22} /><div><strong>{error.code.split("_").join(" ")}</strong><p>{error.message}</p></div></div>;
   }
   if (!result) {
     return <div className="result-message"><Rows3 size={24} /><strong>{running ? "Executing query…" : "No results yet"}</strong><span>Run the query with ⌘/Ctrl + Enter</span></div>;
   }
-  return <GlideResultsGrid result={result} hasMore={hasMore} onLoadMore={onLoadMore} sort={sort} onSortChange={onSortChange} />;
+  return <GlideResultsGrid result={result} hasMore={hasMore} onLoadMore={onLoadMore} sort={sort} onSortChange={onSortChange} editable={editable} onChangesChange={onChangesChange} resetVersion={editResetVersion} />;
 }
 
-function PaginationBar({ result, page, limit, running, onPageChange }: {
+function PaginationBar({ result, page, limit, running, onPageChange, pendingChanges, onCommitChanges, onCancelChanges }: {
   result: QueryResult;
   page: number;
   limit: number;
   running: boolean;
   onPageChange: (page: number) => void;
+  pendingChanges: GridDataChange[];
+  onCommitChanges: () => void;
+  onCancelChanges: () => void;
 }) {
   const total = result.total_records ?? result.rows.length;
   const pages = Math.max(1, Math.ceil(total / limit));
@@ -132,6 +153,11 @@ function PaginationBar({ result, page, limit, running, onPageChange }: {
   const last = Math.min(current * limit, total);
   return <div className="pagination-bar">
     <span>Showing {first.toLocaleString()}–{last.toLocaleString()} of {total.toLocaleString()} records</span>
+    {pendingChanges.length > 0 && <>
+      <span className="pending-change-count">{pendingChanges.length} pending</span>
+      <button type="button" className="cancel-grid-changes interactive-action" disabled={running} onClick={(event) => { event.stopPropagation(); onCancelChanges(); }} title="Discard changes (Escape)"><Undo2 size={11} /> Cancel</button>
+      <button type="button" className="commit-grid-changes interactive-action" disabled={running} onClick={(event) => { event.stopPropagation(); onCommitChanges(); }} title="Commit changes (Cmd/Ctrl+S)"><Save size={11} /> Commit changes</button>
+    </>}
     <span className="pane-spacer" />
     <button type="button" className="interactive-action" disabled={running || current <= 1} onClick={(event) => { event.stopPropagation(); onPageChange(1); }}>First</button>
     <button type="button" className="interactive-action" disabled={running || current <= 1} onClick={(event) => { event.stopPropagation(); onPageChange(current - 1); }}>Prev</button>
