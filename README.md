@@ -23,3 +23,8 @@ Windows builds require the Tauri prerequisites: Node.js, Rust, and Microsoft Vis
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+
+
+fix: description → patch, for example 0.2.0 → 0.2.1
+feat: description → minor, for example 0.2.0 → 0.3.0
+feat!: description → major, for example 0.2.0 → 1.0.0

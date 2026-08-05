@@ -19,6 +19,7 @@ export interface QueryPanelParams {
   ordinal: number;
   autoRun?: boolean;
   connection?: ConnectionSummary;
+  tabColor?: string;
   [key: string]: unknown;
 }
 

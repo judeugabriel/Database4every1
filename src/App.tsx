@@ -7,7 +7,6 @@ import {
 import "dockview-react/dist/styles/dockview.css";
 import {
   Activity,
-  ChevronDown,
   CircleStop,
   Command,
   PanelLeftClose,
@@ -314,14 +313,15 @@ function App() {
       id: `query-${crypto.randomUUID()}`,
       component: "query",
       tabComponent: "queryTab",
-      title: `Query ${ordinal}`,
+      title: queryTabTitle(activeConnection, groups, `Query ${ordinal}`),
       params: {
         ordinal,
         connection: activeConnection,
+        tabColor: queryTabColor(activeConnection, groups),
         initialQuery: initialQueryFor(activeConnection?.engine),
       },
     });
-  }, [activeConnection]);
+  }, [activeConnection, groups]);
 
   const openSchemaObject = useCallback(
     (name: string, _kind: "table" | "view" | "collection", databaseName?: string) => {
@@ -332,16 +332,17 @@ function App() {
         id: `query-${crypto.randomUUID()}`,
         component: "query",
         tabComponent: "queryTab",
-        title: name,
+        title: queryTabTitle(activeConnection, groups, name),
         params: {
           ordinal,
           connection: activeConnection,
+          tabColor: queryTabColor(activeConnection, groups),
           initialQuery: buildObjectPreviewQuery(activeConnection?.engine, name, limit, databaseName),
           autoRun: true,
         },
       });
     },
-    [activeConnection, limit],
+    [activeConnection, groups, limit],
   );
 
   const importSchemaObject = useCallback((name: string, kind: "table" | "view" | "collection") => {
@@ -507,24 +508,6 @@ function App() {
           </button>
           <div className="toolbar-divider" />
 
-          <label className="connection-selector">
-            <span
-              className="connection-dot"
-              style={{ backgroundColor: activeConnection?.accent }}
-            />
-            <select
-              value={activeConnectionId}
-              onChange={(event) => selectConnection(event.target.value)}
-            >
-              {connections.map((connection) => (
-                <option value={connection.id} key={connection.id}>
-                  {connection.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={13} />
-          </label>
-
           <button
             className="run-button"
             disabled={isRunDisabled}
@@ -534,9 +517,7 @@ function App() {
             title={
               !hasActiveQueryTab
                 ? "Open a query tab to run a query"
-                : !activeConnection
-                  ? "Select a connection first"
-                  : undefined
+                : undefined
             }
           >
             <Play size={14} fill="currentColor" />
@@ -654,6 +635,28 @@ function App() {
       </div>
     </WorkspaceContext.Provider>
   );
+}
+
+function queryTabTitle(
+  connection: ConnectionSummary | undefined,
+  groups: ConnectionGroup[],
+  subject: string,
+): string {
+  if (!connection) return `[No connection] ${subject}`;
+  const group = groups.find((item) => item.id === connection.groupId);
+  return group
+    ? `[(${group.name}) ${connection.label}] ${subject}`
+    : `[${connection.label}] ${subject}`;
+}
+
+function queryTabColor(
+  connection: ConnectionSummary | undefined,
+  groups: ConnectionGroup[],
+): string {
+  if (!connection) return "#64748B";
+  return groups.find((item) => item.id === connection.groupId)?.color
+    ?? connection.accent
+    ?? "#64748B";
 }
 
 function initialQueryFor(engine?: ConnectionSummary["engine"]) {
