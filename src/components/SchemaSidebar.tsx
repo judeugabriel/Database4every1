@@ -33,6 +33,7 @@ interface SchemaSidebarProps {
   onRefresh: () => void;
   onAddConnection: () => void;
   onEditConnection: (connection?: ConnectionSummary) => void;
+  onDuplicateConnection: (connection: ConnectionSummary) => void;
   onGroupsChange: (groups: ConnectionGroup[]) => void | Promise<void>;
   onConnectionsChange: (connections: ConnectionSummary[]) => void;
   onDeleteConnection: (connection: ConnectionSummary) => void;
@@ -52,6 +53,7 @@ export function SchemaSidebar({
   onRefresh,
   onAddConnection,
   onEditConnection,
+  onDuplicateConnection,
   onGroupsChange,
   onConnectionsChange,
   onDeleteConnection,
@@ -93,6 +95,7 @@ export function SchemaSidebar({
         onConnectionsChange={onConnectionsChange}
         onDeleteConnection={onDeleteConnection}
         onEditConnection={onEditConnection}
+        onDuplicateConnection={onDuplicateConnection}
         onRefreshConnection={onRefreshConnection}
       />
 

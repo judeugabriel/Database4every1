@@ -28,6 +28,8 @@ database error instead of silently behaving incorrectly.
 ### Data Sources explorer
 
 - Create, edit, test, reconnect, refresh, and delete saved connections.
+- Duplicate a connection into a prefilled new-connection form without changing
+  the original.
 - Connect by selecting a data source; its schema is loaded automatically.
 - Browse databases, schemas, tables, views, collections, indices, Redis logical
   databases, key-prefix groups, and columns/fields.

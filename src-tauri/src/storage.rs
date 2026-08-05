@@ -1,12 +1,13 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use tauri::{AppHandle, Manager, State};
 
 use crate::db::{
     commands::{CommandError, DatabaseState},
-    ConnectionConfig, DbError,
+    DbError,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,7 +30,11 @@ pub struct StoredConnection {
     pub label: String,
     pub engine: String,
     pub accent: String,
-    pub config: Option<ConnectionConfig>,
+    /// Stored connection forms may contain unresolved `{{group_variable}}`
+    /// strings, including in numeric fields such as ports and timeouts. Keep
+    /// this payload opaque while persisting it; `connect_db` receives the
+    /// resolved and strictly typed `ConnectionConfig` separately.
+    pub config: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
