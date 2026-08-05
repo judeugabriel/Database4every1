@@ -39,6 +39,12 @@ struct FindEnvelope {
     skip: Option<u64>,
 }
 
+enum MongoMutation {
+    Insert { collection: String, document: Document },
+    Update { collection: String, filter: Document, update: Document },
+    Delete { collection: String, filter: Document },
+}
+
 impl MongoDbDriver {
     pub fn new() -> Self {
         Self::default()
@@ -108,6 +114,20 @@ impl DatabaseDriver for MongoDbDriver {
 
     async fn execute_query(&self, query: &str, limit: usize) -> Result<QueryResult, DbError> {
         let database = self.database().await?;
+        if let Some(mutation) = parse_mutation_query(query)? {
+            let started = Instant::now();
+            let affected = match mutation {
+                MongoMutation::Insert { collection, document } => {
+                    database.collection::<Document>(&collection).insert_one(document).await.map_err(query_error)?;
+                    1
+                }
+                MongoMutation::Update { collection, filter, update } => database
+                    .collection::<Document>(&collection).update_one(filter, update).await.map_err(query_error)?.modified_count,
+                MongoMutation::Delete { collection, filter } => database
+                    .collection::<Document>(&collection).delete_one(filter).await.map_err(query_error)?.deleted_count,
+            };
+            return Ok(QueryResult { columns: Vec::new(), rows: Vec::new(), execution_time_ms: started.elapsed().as_millis(), total_affected: affected, total_records: None });
+        }
         let request = parse_find_query(query)?;
         let started = Instant::now();
         let collection = database.collection::<Document>(&request.collection);
@@ -221,6 +241,35 @@ impl DatabaseDriver for MongoDbDriver {
             .map(|_| true)
             .map_err(|error| DbError::Connection(error.to_string()))
     }
+}
+
+fn parse_mutation_query(query: &str) -> Result<Option<MongoMutation>, DbError> {
+    let query = query.trim().trim_end_matches(';').trim();
+    let Some(rest) = query.strip_prefix("db.") else { return Ok(None) };
+    for (operation, kind) in [(".insertOne(", "insert"), (".updateOne(", "update"), (".deleteOne(", "delete")] {
+        let Some((collection, arguments)) = rest.split_once(operation) else { continue };
+        let arguments = arguments.strip_suffix(')').ok_or_else(|| DbError::Query(format!("invalid MongoDB {kind} syntax")))?;
+        let parts = split_top_level(arguments)?;
+        return match kind {
+            "insert" => Ok(Some(MongoMutation::Insert {
+                collection: collection.to_owned(),
+                document: parse_document(parts.first().copied().unwrap_or("{}"), "insert document")?,
+            })),
+            "update" => {
+                if parts.len() < 2 { return Err(DbError::Query("updateOne requires a filter and update document".into())); }
+                Ok(Some(MongoMutation::Update {
+                    collection: collection.to_owned(),
+                    filter: parse_document(parts[0], "update filter")?,
+                    update: parse_document(parts[1], "update document")?,
+                }))
+            }
+            _ => Ok(Some(MongoMutation::Delete {
+                collection: collection.to_owned(),
+                filter: parse_document(parts.first().copied().unwrap_or("{}"), "delete filter")?,
+            })),
+        };
+    }
+    Ok(None)
 }
 
 fn parse_find_query(query: &str) -> Result<FindEnvelope, DbError> {

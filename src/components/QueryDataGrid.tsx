@@ -4,6 +4,7 @@ import DataEditor, {
   GridCellKind,
   GridColumnIcon,
   type GridCell,
+  type EditableGridCell,
   type GridColumn,
   type GridSelection,
   type Item,
@@ -13,7 +14,10 @@ import {
   Braces,
   Check,
   Clipboard,
+  Eye,
   LoaderCircle,
+  Pencil,
+  Trash2,
   X,
 } from "lucide-react";
 import type { QueryResult } from "../types/database";
@@ -37,6 +41,17 @@ export interface QueryDataGridProps {
   sort?: GridSort;
   onSortChange?: (sort: GridSort | undefined) => void;
   onHeaderSortClick?: (columnIndex: number) => void;
+  editable?: boolean;
+  onChangesChange?: (changes: GridDataChange[]) => void;
+  resetVersion?: number;
+}
+
+export interface GridDataChange {
+  kind: "insert" | "update" | "delete";
+  rowIndex: number;
+  original?: unknown[];
+  values?: unknown[];
+  changedColumns?: number[];
 }
 
 const EMPTY_SELECTION: GridSelection = {
@@ -52,6 +67,9 @@ export function QueryDataGrid({
   sort,
   onSortChange,
   onHeaderSortClick,
+  editable = false,
+  onChangesChange,
+  resetVersion = 0,
 }: QueryDataGridProps) {
   const [rows, setRows] = useState(result.rows);
   const [columnWidths, setColumnWidths] = useState<Record<number, number>>({});
@@ -60,6 +78,10 @@ export function QueryDataGrid({
   const [loadingMore, setLoadingMore] = useState(false);
   const [canLoadMore, setCanLoadMore] = useState(hasMore);
   const [copyStatus, setCopyStatus] = useState<"csv" | "json">();
+  const [insertedRows, setInsertedRows] = useState<Set<number>>(new Set());
+  const [deletedRows, setDeletedRows] = useState<Set<number>>(new Set());
+  const [cellMenu, setCellMenu] = useState<{ x: number; y: number; columnIndex: number; rowIndex: number }>();
+  const [cellEditor, setCellEditor] = useState<{ x: number; y: number; columnIndex: number; rowIndex: number; text: string }>();
   const loadingRef = useRef(false);
   const { containerRef, width, height } = useAutoSizer();
 
@@ -67,7 +89,50 @@ export function QueryDataGrid({
     setRows(result.rows);
     setCanLoadMore(hasMore);
     setSelection(EMPTY_SELECTION);
-  }, [hasMore, result]);
+    setInsertedRows(new Set());
+    setDeletedRows(new Set());
+    onChangesChange?.([]);
+  }, [hasMore, resetVersion, result]);
+
+  useEffect(() => {
+    if (!cellMenu) return;
+    const close = () => setCellMenu(undefined);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [cellMenu]);
+
+  const publishChanges = useCallback((nextRows: unknown[][], inserted: Set<number>, deleted: Set<number>) => {
+    const changes: GridDataChange[] = [];
+    for (let rowIndex = 0; rowIndex < nextRows.length; rowIndex += 1) {
+      if (inserted.has(rowIndex)) {
+        if (!deleted.has(rowIndex)) changes.push({ kind: "insert", rowIndex, values: nextRows[rowIndex] });
+        continue;
+      }
+      const original = result.rows[rowIndex];
+      if (!original) continue;
+      if (deleted.has(rowIndex)) {
+        changes.push({ kind: "delete", rowIndex, original });
+        continue;
+      }
+      const changedColumns = nextRows[rowIndex]
+        .map((value, columnIndex) => valuesEqual(value, original[columnIndex]) ? -1 : columnIndex)
+        .filter((index) => index >= 0);
+      if (changedColumns.length > 0) changes.push({
+        kind: "update", rowIndex, original, values: nextRows[rowIndex], changedColumns,
+      });
+    }
+    onChangesChange?.(changes);
+  }, [onChangesChange, result.rows]);
 
   const sortedRows = rows;
 
@@ -96,15 +161,19 @@ export function QueryDataGrid({
         kind: GridCellKind.Text,
         data: display,
         displayData: display,
-        allowOverlay: false,
-        readonly: true,
+        allowOverlay: editable && !deletedRows.has(rowIndex),
+        readonly: !editable || deletedRows.has(rowIndex),
         themeOverride:
-          value === null || value === undefined
+          deletedRows.has(rowIndex)
+            ? { textDark: "#9a5960", bgCell: "#261619", baseFontStyle: "italic 12px" }
+            : insertedRows.has(rowIndex)
+              ? { bgCell: "#14241e", textDark: "#9bd8c5" }
+              : value === null || value === undefined
             ? { textDark: "#5f6c79", baseFontStyle: "italic 12px" }
             : undefined,
       };
     },
-    [sortedRows],
+    [deletedRows, editable, insertedRows, sortedRows],
   );
 
   const loadMore = useCallback(async () => {
@@ -136,10 +205,42 @@ export function QueryDataGrid({
     [result.columns, selection, sortedRows],
   );
 
+  const beginEditCell = useCallback((columnIndex: number, rowIndex: number, x: number, y: number) => {
+    if (!editable || deletedRows.has(rowIndex)) return;
+    const previous = rows[rowIndex]?.[columnIndex];
+    setCellEditor({
+      x: Math.min(window.innerWidth - 340, Math.max(8, x)),
+      y: Math.min(window.innerHeight - 210, Math.max(8, y)),
+      columnIndex,
+      rowIndex,
+      text: previous === null || previous === undefined ? "" : displayValue(previous),
+    });
+  }, [deletedRows, editable, rows]);
+
+  const applyCellEdit = useCallback(() => {
+    if (!cellEditor) return;
+    const { columnIndex, rowIndex, text } = cellEditor;
+    const previous = rows[rowIndex]?.[columnIndex];
+    const nextRows = rows.map((row) => [...row]);
+    nextRows[rowIndex][columnIndex] = parseEditedValue(text, previous, result.columns[columnIndex]?.data_type);
+    setRows(nextRows);
+    publishChanges(nextRows, insertedRows, deletedRows);
+    setCellEditor(undefined);
+  }, [cellEditor, deletedRows, insertedRows, publishChanges, result.columns, rows]);
+
+  const deleteRow = useCallback((rowIndex: number) => {
+    if (!editable) return;
+    const nextDeleted = new Set(deletedRows);
+    nextDeleted.add(rowIndex);
+    setDeletedRows(nextDeleted);
+    publishChanges(rows, insertedRows, nextDeleted);
+  }, [deletedRows, editable, insertedRows, publishChanges, rows]);
+
   return (
     <div className="query-data-grid">
       <div className="grid-actions">
         <span>{rows.length.toLocaleString()} rows loaded</span>
+        {editable && <span className="grid-edit-hint">Editing enabled · Double-click a cell · Select rows and press Delete</span>}
         {sort && (
           <button
             type="button"
@@ -202,7 +303,7 @@ export function QueryDataGrid({
           getCellsForSelection={true}
           gridSelection={selection}
           onGridSelectionChange={setSelection}
-          rowMarkers="number"
+          rowMarkers={editable ? "both" : "number"}
           rowMarkerWidth={54}
           freezeColumns={1}
           minColumnWidth={80}
@@ -210,7 +311,32 @@ export function QueryDataGrid({
           smoothScrollY={true}
           scaleToRem={true}
           copyHeaders
-          keybindings={{ copy: true, selectAll: true }}
+          keybindings={{ copy: true, selectAll: true, delete: editable }}
+          trailingRowOptions={editable ? { hint: "Add row", sticky: true } : undefined}
+          onRowAppended={editable ? () => {
+            const rowIndex = rows.length;
+            const nextRows = [...rows, result.columns.map(() => null)];
+            const nextInserted = new Set(insertedRows).add(rowIndex);
+            setRows(nextRows);
+            setInsertedRows(nextInserted);
+            publishChanges(nextRows, nextInserted, deletedRows);
+          } : undefined}
+          onCellEdited={editable ? ([columnIndex, rowIndex], newValue: EditableGridCell) => {
+            if (deletedRows.has(rowIndex) || newValue.kind !== GridCellKind.Text) return;
+            const nextRows = rows.map((row) => [...row]);
+            nextRows[rowIndex][columnIndex] = parseEditedValue(newValue.data, rows[rowIndex][columnIndex], result.columns[columnIndex]?.data_type);
+            setRows(nextRows);
+            publishChanges(nextRows, insertedRows, deletedRows);
+          } : undefined}
+          onDelete={editable ? (nextSelection) => {
+            const selected = new Set(nextSelection.rows.toArray());
+            if (selected.size === 0) return false;
+            const nextDeleted = new Set(deletedRows);
+            selected.forEach((index) => nextDeleted.add(index));
+            setDeletedRows(nextDeleted);
+            publishChanges(rows, insertedRows, nextDeleted);
+            return true;
+          } : undefined}
           onHeaderClicked={(columnIndex) => {
             onHeaderSortClick?.(columnIndex);
           }}
@@ -218,10 +344,20 @@ export function QueryDataGrid({
             setColumnWidths((current) => ({ ...current, [columnIndex]: Math.round(width) }));
           }}
           onCellClicked={([columnIndex, rowIndex], event) => {
-            if (!event.isDoubleClick) return;
-            setInspector({
-              column: result.columns[columnIndex]?.name ?? `Column ${columnIndex + 1}`,
-              value: sortedRows[rowIndex]?.[columnIndex],
+            setCellMenu(undefined);
+            if (event.isDoubleClick && editable) {
+              beginEditCell(columnIndex, rowIndex, event.bounds.x + event.localEventX, event.bounds.y + event.localEventY);
+              event.preventDefault();
+            }
+          }}
+          onCellContextMenu={([columnIndex, rowIndex], event) => {
+            event.preventDefault();
+            const bounds = event.bounds;
+            setCellMenu({
+              x: Math.min(window.innerWidth - 190, Math.max(8, bounds.x + event.localEventX)),
+              y: Math.min(window.innerHeight - 126, Math.max(8, bounds.y + event.localEventY)),
+              columnIndex,
+              rowIndex,
             });
           }}
           onVisibleRegionChanged={(range) => {
@@ -250,6 +386,56 @@ export function QueryDataGrid({
           }}
         />
       </div>
+
+      {cellMenu && (
+        <div
+          className="grid-cell-context-menu"
+          style={{ left: cellMenu.x, top: cellMenu.y }}
+          role="menu"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button type="button" role="menuitem" onClick={() => {
+            setInspector({
+              column: result.columns[cellMenu.columnIndex]?.name ?? `Column ${cellMenu.columnIndex + 1}`,
+              value: rows[cellMenu.rowIndex]?.[cellMenu.columnIndex],
+            });
+            setCellMenu(undefined);
+          }}><Eye size={13} /> Show in Value Inspector</button>
+          <button type="button" role="menuitem" disabled={!editable || deletedRows.has(cellMenu.rowIndex)} title={editable ? "Edit this cell" : "This query result is read-only"} onClick={() => {
+            beginEditCell(cellMenu.columnIndex, cellMenu.rowIndex, cellMenu.x, cellMenu.y);
+            setCellMenu(undefined);
+          }}><Pencil size={13} /> Edit cell</button>
+          <button type="button" role="menuitem" className="danger" disabled={!editable || deletedRows.has(cellMenu.rowIndex)} title={editable ? "Stage this row for deletion" : "This query result is read-only"} onClick={() => {
+            deleteRow(cellMenu.rowIndex);
+            setCellMenu(undefined);
+          }}><Trash2 size={13} /> Delete row</button>
+        </div>
+      )}
+
+      {cellEditor && (
+        <div className="grid-cell-editor" style={{ left: cellEditor.x, top: cellEditor.y }} role="dialog" aria-label={`Edit ${result.columns[cellEditor.columnIndex]?.name ?? "cell"}`}>
+          <label>{result.columns[cellEditor.columnIndex]?.name ?? "Cell value"}</label>
+          <textarea
+            autoFocus
+            value={cellEditor.text}
+            onChange={(event) => setCellEditor((current) => current ? { ...current, text: event.target.value } : current)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setCellEditor(undefined);
+              } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                applyCellEdit();
+              }
+            }}
+          />
+          <div>
+            <button type="button" onClick={() => setCellEditor(undefined)}>Cancel</button>
+            <button type="button" className="primary" onClick={applyCellEdit}>Apply</button>
+          </div>
+        </div>
+      )}
 
       {inspector && (
         <ValueInspector
@@ -296,6 +482,31 @@ function displayValue(value: unknown) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function valuesEqual(left: unknown, right: unknown) {
+  if (Object.is(left, right)) return true;
+  if (typeof left === "object" && typeof right === "object") {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+  return false;
+}
+
+function parseEditedValue(text: string, previous: unknown, dataType?: string): unknown {
+  const trimmed = text.trim();
+  if (/^null$/i.test(trimmed)) return null;
+  if (typeof previous === "boolean" || /bool/i.test(dataType ?? "")) {
+    if (/^true$/i.test(trimmed)) return true;
+    if (/^false$/i.test(trimmed)) return false;
+  }
+  if (typeof previous === "number" || /int|float|double|numeric|decimal|real/i.test(dataType ?? "")) {
+    const number = Number(trimmed);
+    if (Number.isFinite(number)) return number;
+  }
+  if (typeof previous === "object" && previous !== null || /json|array|object/i.test(dataType ?? "")) {
+    try { return JSON.parse(text); } catch { return text; }
+  }
+  return text;
 }
 
 function estimateColumnWidth(name: string, dataType: string) {

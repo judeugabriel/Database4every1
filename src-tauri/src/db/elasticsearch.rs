@@ -41,6 +41,7 @@ enum ElasticsearchQuery {
     },
     Sql(Value),
     IndexDocument { index: String, body: Value },
+    Mutation { method: Method, path: String, body: Option<Value> },
 }
 
 #[derive(Clone, Copy)]
@@ -178,6 +179,13 @@ impl DatabaseDriver for ElasticsearchDriver {
                         Some(JsonBody::new(body)),
                         None,
                     )
+                    .await
+                    .map_err(query_error)?;
+                response_body(response).await?
+            }
+            ElasticsearchQuery::Mutation { method, path, body } => {
+                let response = client
+                    .send(method, &path, HeaderMap::new(), None::<&()>, body.map(JsonBody::new), None)
                     .await
                     .map_err(query_error)?;
                 response_body(response).await?
@@ -505,16 +513,21 @@ fn parse_query(query: &str, default_index: Option<&str>) -> Result<Elasticsearch
         return Ok(ElasticsearchQuery::Sql(json!({ "query": query })));
     }
     let uppercase = query.to_ascii_uppercase();
-    if uppercase.starts_with("POST ") || uppercase.starts_with("GET ") {
-        let (request_line, body) = query.split_once('\n').ok_or_else(|| {
-            DbError::Query("expected a JSON body after the Elasticsearch request line".into())
-        })?;
+    if uppercase.starts_with("POST ") || uppercase.starts_with("GET ") || uppercase.starts_with("DELETE ") {
+        let (request_line, body_text) = query.split_once('\n').unwrap_or((query, ""));
         let (method, path) = request_line
             .split_once(char::is_whitespace)
             .ok_or_else(|| {
                 DbError::Query("expected GET or POST followed by an Elasticsearch endpoint".into())
             })?;
-        let method = match method.to_ascii_uppercase().as_str() {
+        let method_name = method.to_ascii_uppercase();
+        if method_name == "DELETE" {
+            if !body_text.trim().is_empty() {
+                return Err(DbError::Query("DELETE requests must not include a JSON body".into()));
+            }
+            return Ok(ElasticsearchQuery::Mutation { method: Method::Delete, path: path.trim().to_owned(), body: None });
+        }
+        let method = match method_name.as_str() {
             "GET" => ElasticsearchHttpMethod::Get,
             "POST" => ElasticsearchHttpMethod::Post,
             _ => {
@@ -524,13 +537,19 @@ fn parse_query(query: &str, default_index: Option<&str>) -> Result<Elasticsearch
             }
         };
         let path = path.trim();
-        let body: Value = serde_json::from_str(body)
+        if body_text.trim().is_empty() {
+            return Err(DbError::Query("expected a JSON body after the Elasticsearch request line".into()));
+        }
+        let body: Value = serde_json::from_str(body_text)
             .map_err(|error| DbError::Query(format!("invalid Elasticsearch JSON: {error}")))?;
         if path.trim_end_matches('/') == "/_sql" {
             return Ok(ElasticsearchQuery::Sql(body));
         }
         if let Some(index) = path.strip_prefix('/').and_then(|path| path.strip_suffix("/_doc")).filter(|index| !index.is_empty()) {
             return Ok(ElasticsearchQuery::IndexDocument { index: index.to_owned(), body });
+        }
+        if path.contains("/_update/") {
+            return Ok(ElasticsearchQuery::Mutation { method: Method::Post, path: path.to_owned(), body: Some(body) });
         }
         let index = path
             .strip_prefix('/')

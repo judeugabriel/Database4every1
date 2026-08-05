@@ -9,10 +9,12 @@ import {
 } from "../services/database";
 import type { BackendError, ConnectionSummary, QueryResult } from "../types/database";
 import type { GridSort } from "./results/GlideResultsGrid";
+import type { GridDataChange } from "./QueryDataGrid";
 import { QueryEditor } from "./editor/QueryEditor";
 import { QueryResultsPanel, type QueryLogEntry } from "./results/QueryResultsPanel";
 import { useWorkspace } from "./WorkspaceContext";
 import { applyQueryControls, type QuerySort } from "../utils/queryBuilder";
+import { buildMutationQueries } from "../utils/dataMutations";
 
 export interface QueryPanelParams {
   initialQuery: string;
@@ -20,6 +22,11 @@ export interface QueryPanelParams {
   autoRun?: boolean;
   connection?: ConnectionSummary;
   tabColor?: string;
+  editableTarget?: {
+    name: string;
+    kind: "table" | "view" | "collection";
+    databaseName?: string;
+  };
   [key: string]: unknown;
 }
 
@@ -45,6 +52,9 @@ export function QueryPanel({ api, params }: IDockviewPanelProps<QueryPanelParams
   const [logs, setLogs] = useState<QueryLogEntry[]>([]);
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<GridSort>();
+  const [pendingChanges, setPendingChanges] = useState<GridDataChange[]>([]);
+  const [editResetVersion, setEditResetVersion] = useState(0);
+  const pendingChangesRef = useRef<GridDataChange[]>([]);
   const activeQueryId = useRef<string | undefined>(undefined);
   const lastQueryId = useRef<string | undefined>(undefined);
   const startedAt = useRef(0);
@@ -80,6 +90,7 @@ export function QueryPanel({ api, params }: IDockviewPanelProps<QueryPanelParams
   useEffect(() => { resultRef.current = result; }, [result]);
   useEffect(() => { pageRef.current = page; }, [page]);
   useEffect(() => { sortRef.current = sort; }, [sort]);
+  useEffect(() => { pendingChangesRef.current = pendingChanges; }, [pendingChanges]);
 
   useEffect(() => {
     if (!running) return;
@@ -97,6 +108,12 @@ export function QueryPanel({ api, params }: IDockviewPanelProps<QueryPanelParams
     preserveStructure = false,
   ) => {
     if (!tabConnection || runningRef.current || !queryRef.current.trim()) return;
+    if (pendingChangesRef.current.length > 0) {
+      if (!window.confirm("Discard the pending grid changes and run this query?")) return;
+      pendingChangesRef.current = [];
+      setPendingChanges([]);
+      setEditResetVersion((version) => version + 1);
+    }
     const effectiveSort = targetSort === null ? undefined : targetSort;
     const querySort: QuerySort | undefined = effectiveSort ? {
       column: resultRef.current?.columns[effectiveSort.columnIndex]?.name ?? "",
@@ -228,6 +245,91 @@ export function QueryPanel({ api, params }: IDockviewPanelProps<QueryPanelParams
     return collected;
   }, [tabConnection]);
 
+  const editable = Boolean(
+    params.editableTarget
+    && params.editableTarget.kind !== "view"
+    && tabConnection
+    && ["postgresql", "mysql", "mongodb", "elasticsearch"].includes(tabConnection.engine),
+  );
+
+  const commitChanges = useCallback(async () => {
+    if (!editable || !tabConnection || !params.editableTarget || !resultRef.current || pendingChanges.length === 0 || runningRef.current) return;
+    const inserts = pendingChanges.filter((change) => change.kind === "insert").length;
+    const updates = pendingChanges.filter((change) => change.kind === "update").length;
+    const deletes = pendingChanges.filter((change) => change.kind === "delete").length;
+    if (!window.confirm(`Commit ${pendingChanges.length} pending change(s) to ${params.editableTarget.name}?\n\n${inserts} insert(s), ${updates} update(s), ${deletes} deletion(s).`)) return;
+    setRunning(true);
+    runningRef.current = true;
+    setError(undefined);
+    try {
+      const queries = buildMutationQueries(
+        tabConnection.engine,
+        params.editableTarget,
+        resultRef.current.columns,
+        pendingChanges,
+      );
+      if (tabConnection.engine === "postgresql" || tabConnection.engine === "mysql") {
+        const databaseDirective = queries[0]?.match(/^-- datacraft:database=[^\n]+\n/)?.[0] ?? "";
+        const statements = databaseDirective
+          ? queries.map((query) => query.startsWith(databaseDirective) ? query.slice(databaseDirective.length) : query)
+          : queries;
+        const batch = `${databaseDirective}BEGIN;\n${statements.join("\n")}\nCOMMIT;`;
+        await executeQuery(tabConnection.id, batch, 1, crypto.randomUUID());
+      } else {
+        for (const mutationQuery of queries) {
+          await executeQuery(tabConnection.id, mutationQuery, 1, crypto.randomUUID());
+        }
+      }
+      pendingChangesRef.current = [];
+      setPendingChanges([]);
+      setLogs((current) => [...current, {
+        timestamp: new Date().toLocaleTimeString(),
+        level: "notice",
+        message: `Committed ${queries.length} data change(s)`,
+      }]);
+    } catch (caught) {
+      setError(normalizeBackendError(caught));
+      return;
+    } finally {
+      setRunning(false);
+      runningRef.current = false;
+    }
+    await run(pageRef.current, sortRef.current, false);
+  }, [editable, params.editableTarget, pendingChanges, run, tabConnection]);
+
+  const cancelChanges = useCallback(() => {
+    if (pendingChangesRef.current.length === 0) return;
+    pendingChangesRef.current = [];
+    setPendingChanges([]);
+    setEditResetVersion((version) => version + 1);
+    setLogs((current) => [...current, {
+      timestamp: new Date().toLocaleTimeString(),
+      level: "info",
+      message: "Discarded pending data changes",
+    }]);
+  }, []);
+
+  useEffect(() => {
+    const save = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s" || !api.isActive) return;
+      event.preventDefault();
+      void commitChanges();
+    };
+    window.addEventListener("keydown", save);
+    return () => window.removeEventListener("keydown", save);
+  }, [api, commitChanges]);
+
+  useEffect(() => {
+    const discard = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !api.isActive || pendingChangesRef.current.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelChanges();
+    };
+    window.addEventListener("keydown", discard);
+    return () => window.removeEventListener("keydown", discard);
+  }, [api, cancelChanges]);
+
   useEffect(() => {
     if (api.isActive && runRequest > 0) void run();
   }, [api, run, runRequest]);
@@ -286,11 +388,35 @@ export function QueryPanel({ api, params }: IDockviewPanelProps<QueryPanelParams
           onLoadMore={loadMore}
           page={page}
           limit={limit}
-          onLimitChange={setLimit}
+          onLimitChange={(nextLimit) => {
+            if (pendingChangesRef.current.length > 0) {
+              window.alert("Commit the pending grid changes before changing the limit.");
+              return;
+            }
+            setLimit(nextLimit);
+          }}
           onExportAll={exportAll}
           sort={sort}
-          onSortChange={(nextSort) => void run(1, nextSort ?? null, true)}
-          onPageChange={(nextPage) => void run(nextPage, sort, true)}
+          onSortChange={(nextSort) => {
+            if (pendingChangesRef.current.length > 0) {
+              window.alert("Commit the pending grid changes before sorting.");
+              return;
+            }
+            void run(1, nextSort ?? null, true);
+          }}
+          onPageChange={(nextPage) => {
+            if (pendingChangesRef.current.length > 0) {
+              window.alert("Commit the pending grid changes before changing pages.");
+              return;
+            }
+            void run(nextPage, sort, true);
+          }}
+          editable={editable}
+          pendingChanges={pendingChanges}
+          onChangesChange={setPendingChanges}
+          onCommitChanges={() => void commitChanges()}
+          onCancelChanges={cancelChanges}
+          editResetVersion={editResetVersion}
         />
       </section>
     </div>
