@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
-import type { CompletionCatalog } from "../types/database";
+import type { CompletionCatalog, SchemaTree } from "../types/database";
+import type { ConnectionGroup, ConnectionSummary } from "../types/connection";
 
 export interface QueryActivity {
   running: boolean;
@@ -13,6 +14,9 @@ export interface WorkspaceContextValue {
   runRequest: number;
   cancelRequest: number;
   reportActivity: (activity: QueryActivity) => void;
+  connections: ConnectionSummary[];
+  groups: ConnectionGroup[];
+  ensureConnection: (connectionId: string) => Promise<SchemaTree | undefined>;
 }
 
 export const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);

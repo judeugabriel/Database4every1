@@ -198,7 +198,7 @@ export function ConnectionModal({ connection, duplicate = false, groups, onClose
                   <select
                     value={config.groupId ?? ""}
                     onChange={(event) =>
-                      setConfig((current) => ({
+                      setConfig((current) => clearPasswordVariableReferences({
                         ...current,
                         groupId: event.target.value || undefined,
                       }))
@@ -248,8 +248,11 @@ export function ConnectionModal({ connection, duplicate = false, groups, onClose
                 onChange={(event) => setConfig((current) => ({ ...current, database: event.target.value }))} /></Field>}
               {!isFileDatabase && <Field label="User"><input autoComplete="username" value={config.username ?? ""}
                 onChange={(event) => setConfig((current) => ({ ...current, username: event.target.value }))} /></Field>}
-              {!isFileDatabase && <Field label="Password"><input type="password" autoComplete="new-password" value={config.password ?? ""}
-                onChange={(event) => setConfig((current) => ({ ...current, password: event.target.value }))} /></Field>}
+              {!isFileDatabase && <Field label="Password" compound><PasswordVariableInput
+                value={config.password ?? ""}
+                group={selectedGroup}
+                onChange={(password) => setConfig((current) => ({ ...current, password }))}
+              /></Field>}
               {!isFileDatabase && <Field label="SSL mode" wide><div className="select-wrap"><select value={config.ssl_mode}
                 onChange={(event) => setConfig((current) => ({ ...current, ssl_mode: event.target.value as SslMode }))}>
                 <option value="disable">Disable</option><option value="prefer">Prefer</option>
@@ -299,11 +302,17 @@ export function ConnectionModal({ connection, duplicate = false, groups, onClose
                     <Field label="Private key path" wide><input required placeholder="~/.ssh/id_ed25519"
                       value={config.ssh_tunnel_config?.private_key_path ?? ""}
                       onChange={(event) => updateSsh(setConfig, { private_key_path: event.target.value })} /></Field>
-                    <Field label="Key passphrase" wide><input type="password" value={config.ssh_tunnel_config?.private_key_passphrase ?? ""}
-                      onChange={(event) => updateSsh(setConfig, { private_key_passphrase: event.target.value })} /></Field>
-                  </> : <Field label="SSH password" wide><input type="password" required
+                    <Field label="Key passphrase" wide compound><PasswordVariableInput
+                      value={config.ssh_tunnel_config?.private_key_passphrase ?? ""}
+                      group={selectedGroup}
+                      onChange={(private_key_passphrase) => updateSsh(setConfig, { private_key_passphrase })}
+                    /></Field>
+                  </> : <Field label="SSH password" wide compound><PasswordVariableInput
+                    required
                     value={config.ssh_tunnel_config?.password ?? ""}
-                    onChange={(event) => updateSsh(setConfig, { password: event.target.value })} /></Field>}
+                    group={selectedGroup}
+                    onChange={(password) => updateSsh(setConfig, { password })}
+                  /></Field>}
                   <div className="known-hosts-note form-wide">
                     <ShieldCheck size={13} /> Host keys are verified against <code>~/.ssh/known_hosts</code>.
                   </div>
@@ -351,8 +360,88 @@ export function ConnectionModal({ connection, duplicate = false, groups, onClose
   );
 }
 
-function Field({ label, wide, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
-  return <label className={wide ? "form-wide" : ""}><span>{label}</span>{children}</label>;
+function Field({ label, wide, compound, children }: { label: string; wide?: boolean; compound?: boolean; children: React.ReactNode }) {
+  const className = `${wide ? "form-wide " : ""}${compound ? "form-field" : ""}`.trim();
+  if (compound) return <div className={className}><span>{label}</span>{children}</div>;
+  return <label className={className}><span>{label}</span>{children}</label>;
+}
+
+function PasswordVariableInput({
+  value,
+  group,
+  required,
+  onChange,
+}: {
+  value: string;
+  group?: ConnectionGroup;
+  required?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const variableNames = Object.keys(group?.variables ?? {});
+  const referencedVariable = variableReference(value);
+  const usesVariable = referencedVariable !== undefined;
+  return (
+    <div className="password-variable-field">
+      {usesVariable ? (
+        <div className="select-wrap">
+          <select
+            required={required}
+            aria-label="Password group variable"
+            value={referencedVariable}
+            onChange={(event) => onChange(event.target.value ? `{{${event.target.value}}}` : "")}
+          >
+            <option value="">Select a group variable</option>
+            {referencedVariable && !variableNames.includes(referencedVariable) && (
+              <option value={referencedVariable}>{referencedVariable} (unavailable)</option>
+            )}
+            {variableNames.map((name) => (
+              <option key={name} value={name}>
+                {name}{group?.variableSecrets?.[name] ? " (password)" : ""}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={13} />
+        </div>
+      ) : (
+        <input
+          type="password"
+          required={required}
+          autoComplete="new-password"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+      <span className="password-variable-toggle">
+        <input
+          type="checkbox"
+          aria-label="Use a group variable for this password"
+          checked={usesVariable}
+          disabled={variableNames.length === 0}
+          onChange={(event) => onChange(event.target.checked && variableNames.length > 0 ? `{{${variableNames[0]}}}` : "")}
+        />
+        Use group variable
+      </span>
+    </div>
+  );
+}
+
+function variableReference(value: string) {
+  return value.match(/^\{\{([A-Za-z_][A-Za-z0-9_.-]*)\}\}$/)?.[1];
+}
+
+function clearPasswordVariableReferences(config: ConnectionConfig): ConnectionConfig {
+  const ssh = config.ssh_tunnel_config;
+  return {
+    ...config,
+    password: config.password && variableReference(config.password) ? "" : config.password,
+    ssh_tunnel_config: ssh ? {
+      ...ssh,
+      password: ssh.password && variableReference(ssh.password) ? "" : ssh.password,
+      private_key_passphrase: ssh.private_key_passphrase && variableReference(ssh.private_key_passphrase)
+        ? ""
+        : ssh.private_key_passphrase,
+    } : ssh,
+  };
 }
 
 function updateSsh(

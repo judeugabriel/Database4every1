@@ -36,7 +36,10 @@ database error instead of silently behaving incorrectly.
 - Open a table, collection, index, or Redis key in its own static query tab.
 - Generate and execute an engine-specific preview query automatically.
 - Refresh schema metadata manually per connection.
-- Sort explorer objects alphabetically.
+- Sort groups and connections independently by name A–Z, name Z–A, or their
+  saved manual/creation order. The preference persists between launches.
+- Export selected groups and connections to a shareable Database4every1 JSON
+  bundle, and import a bundle without overwriting existing data sources.
 - Import records from the context menu of SQL tables and Elasticsearch indices.
 - Use engine-specific icons for connections.
 
@@ -54,10 +57,24 @@ Production, Staging, or Local Development.
 - Define any number of group variables and use them in connection settings with
   `{{variable_name}}`, for example `{{host}}`, `{{port}}`, or
   `{{es_password}}`.
+- Mark group variables as passwords to mask their values in the group editor.
+  Database passwords, SSH passwords, and key passphrases can select a group
+  variable directly instead of manually typing a `{{variable_name}}` reference.
 - Duplicated groups receive independent variables and connection copies.
 
 Variables are resolved immediately before connecting, so the saved connection
 can remain reusable between environments.
+
+Data-source bundles preserve group membership, colors, icons, every group
+variable key and value, and connection settings. Connection passwords, SSH
+credentials, and local private-key paths are excluded by default. Full
+connection credentials can be included explicitly for a trusted recipient,
+but bundle files are not encrypted.
+
+Password-variable metadata and password field references such as
+`{{es_password}}` are always included, even when literal credentials are
+excluded, so imported connections remain linked to their imported group
+variables.
 
 ### Connection configuration
 
@@ -204,6 +221,11 @@ visible page. Users can select all fields or a subset and save as:
 - XML
 - Excel (`.xlsx`)
 - PDF
+
+Results can also be transferred directly to another saved connection. The
+exporter connects the selected destination, loads its schema, and lets the user
+choose a PostgreSQL/MySQL table, MongoDB collection, or Elasticsearch index.
+All selected fields and all query rows are then inserted into that destination.
 
 ### Persistence and cleanup
 

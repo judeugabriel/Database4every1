@@ -51,6 +51,8 @@ export type {
   ConnectionSummary,
   ConnectionWorkspace,
   DatabaseEngine,
+  ExplorerSortOrder,
+  ExplorerSortPreferences,
   SshTunnelConfig,
   SslMode,
 } from "./connection";

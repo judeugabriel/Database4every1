@@ -20,6 +20,8 @@ pub struct ConnectionGroup {
     pub is_expanded: Option<bool>,
     #[serde(default)]
     pub variables: BTreeMap<String, String>,
+    #[serde(default)]
+    pub variable_secrets: BTreeMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +40,24 @@ pub struct StoredConnection {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerSortOrder {
+    #[default]
+    NameAsc,
+    NameDesc,
+    Manual,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplorerSortPreferences {
+    #[serde(default)]
+    pub groups: ExplorerSortOrder,
+    #[serde(default)]
+    pub connections: ExplorerSortOrder,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionWorkspace {
     #[serde(default = "existing_workspace_is_initialized")]
@@ -46,6 +66,8 @@ pub struct ConnectionWorkspace {
     pub groups: Vec<ConnectionGroup>,
     #[serde(default)]
     pub connections: Vec<StoredConnection>,
+    #[serde(default)]
+    pub sort_preferences: ExplorerSortPreferences,
 }
 
 fn existing_workspace_is_initialized() -> bool {
@@ -174,4 +196,11 @@ pub async fn save_export_file(path: String, data: String) -> Result<(), CommandE
     tokio::fs::write(&path, bytes)
         .await
         .map_err(|error| storage_error(format!("cannot write export file: {error}")))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn read_import_file(path: String) -> Result<String, CommandError> {
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|error| storage_error(format!("cannot read import file: {error}")))
 }

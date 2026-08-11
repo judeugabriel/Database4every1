@@ -383,14 +383,16 @@ button {
   gap: 11px 12px;
 }
 
-.form-grid > label {
+.form-grid > label,
+.form-grid > .form-field {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-.form-grid > label > span {
+.form-grid > label > span,
+.form-grid > .form-field > span {
   color: #758290;
   font-size: 9px;
   font-weight: 650;
@@ -746,18 +748,27 @@ button {
   max-height: 285px;
   display: flex;
   flex-direction: column;
+  position: relative;
   padding: 0 8px 9px;
   border-bottom: 1px solid var(--line-soft);
 }
 
+.database-tree-toolbar {
+  position: relative;
+  display: flex;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
 .create-group-button {
   height: 29px;
-  flex: 0 0 29px;
+  min-width: 0;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  margin-bottom: 6px;
+  margin: 0;
   border: 1px dashed #33434f;
   border-radius: 5px;
   color: #778795;
@@ -765,6 +776,154 @@ button {
   font-size: 10px;
   cursor: pointer;
 }
+
+.explorer-sort-button {
+  width: 31px;
+  height: 29px;
+  flex: 0 0 31px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #2b3944;
+  border-radius: 5px;
+  color: #778795;
+  background: #111820;
+  cursor: pointer;
+}
+
+.explorer-sort-button:hover,
+.explorer-sort-button.active {
+  border-color: #477666;
+  color: #9bd2c2;
+  background: #14221e;
+}
+
+.explorer-sort-panel {
+  position: absolute;
+  z-index: 40;
+  top: 34px;
+  right: 0;
+  width: 210px;
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #34434f;
+  border-radius: 6px;
+  background: #111820;
+  box-shadow: 0 12px 28px #0009;
+}
+
+.explorer-sort-panel label {
+  display: grid;
+  gap: 4px;
+  color: #8fa0ad;
+  font-size: 10px;
+}
+
+.explorer-sort-panel select {
+  width: 100%;
+  height: 28px;
+  border: 1px solid #33434f;
+  border-radius: 4px;
+  color: #d6e0e7;
+  background: #0c1218;
+  font: inherit;
+}
+
+.datasource-transfer-layer {
+  z-index: 90;
+}
+
+.datasource-transfer-modal {
+  width: min(590px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #35424e;
+  border-radius: 10px;
+  background: #11171e;
+  box-shadow: 0 24px 80px #000a;
+}
+
+.datasource-transfer-modal header,
+.datasource-transfer-modal footer,
+.datasource-transfer-modal footer > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.datasource-transfer-modal h2,
+.datasource-transfer-modal p {
+  margin: 0;
+}
+
+.datasource-transfer-modal h2 { font-size: 16px; }
+.datasource-transfer-modal p { color: var(--muted); font-size: 11px; }
+
+.datasource-transfer-selection {
+  min-height: 130px;
+  overflow: auto;
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #0c1218;
+}
+
+.transfer-group {
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border-radius: 5px;
+  background: #121a22;
+}
+
+.transfer-group-label,
+.transfer-connection,
+.transfer-secrets {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.transfer-group-label small,
+.transfer-connection small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.transfer-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.transfer-connection {
+  min-height: 25px;
+  padding-left: 23px;
+  color: #b7c3cc;
+  font-size: 10px;
+}
+
+.transfer-secrets {
+  align-items: flex-start;
+  padding: 9px;
+  border: 1px solid #684f29;
+  border-radius: 6px;
+  color: #d9ad66;
+  background: #241b10;
+  font-size: 10px;
+}
+
+.transfer-secrets span { display: grid; gap: 2px; }
+.transfer-secrets small { color: #ad8954; }
+.datasource-transfer-modal footer { padding-top: 10px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; }
+.datasource-transfer-modal footer button { display: inline-flex; align-items: center; gap: 5px; }
 
 .create-group-button:hover {
   border-color: #477666;
@@ -1030,9 +1189,45 @@ button {
 
 .group-variable-row {
   display: grid;
-  grid-template-columns: minmax(110px, .7fr) 14px minmax(160px, 1.3fr) 28px;
+  grid-template-columns: minmax(100px, .7fr) 14px minmax(130px, 1.3fr) 78px 28px;
   align-items: center;
   gap: 5px;
+}
+
+.group-variable-password {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #8795a0;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.password-variable-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.password-variable-field > input,
+.password-variable-field > .select-wrap {
+  width: 100%;
+}
+
+.password-variable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #778795;
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.password-variable-toggle input,
+.group-variable-password input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
 }
 
 .group-variable-row > span {
@@ -1654,6 +1849,9 @@ button {
 .export-modal h2 { margin: 0; font-size: 16px; }
 .export-modal > label { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; }
 .export-modal select { min-width: 180px; padding: 6px; border: 1px solid var(--line); border-radius: 5px; color: var(--text); background: var(--surface-raised); }
+.export-destination { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 10px; border: 1px solid var(--line-soft); border-radius: 6px; background: #0d1319; }
+.export-destination label { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; }
+.export-destination select { width: min(330px, 65%); min-width: 0; }
 .export-fields-header button { border: 0; color: var(--accent); background: transparent; cursor: pointer; font-size: 10px; }
 .export-fields { min-height: 100px; overflow: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 9px; border: 1px solid var(--line-soft); border-radius: 6px; }
 .export-fields label { display: flex; align-items: center; gap: 6px; min-width: 0; color: #aeb9c3; font: 10px "SFMono-Regular", Consolas, monospace; }

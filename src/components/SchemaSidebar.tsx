@@ -19,7 +19,7 @@ import type {
   SchemaTree,
   TableNode,
 } from "../types/database";
-import type { ConnectionGroup } from "../types/connection";
+import type { ConnectionGroup, ExplorerSortPreferences } from "../types/connection";
 import { DatabaseTree } from "./sidebar/DatabaseTree";
 
 interface SchemaSidebarProps {
@@ -38,6 +38,10 @@ interface SchemaSidebarProps {
   onConnectionsChange: (connections: ConnectionSummary[]) => void;
   onDeleteConnection: (connection: ConnectionSummary) => void;
   onRefreshConnection: (connectionId: string) => void;
+  sortPreferences: ExplorerSortPreferences;
+  onSortPreferencesChange: (preferences: ExplorerSortPreferences) => void;
+  onExportDataSources: () => void;
+  onImportDataSources: () => void;
   onOpenObject: (name: string, kind: "table" | "view" | "collection", databaseName?: string) => void;
   onImportObject: (name: string, kind: "table" | "view" | "collection", databaseName?: string) => void;
 }
@@ -58,6 +62,10 @@ export function SchemaSidebar({
   onConnectionsChange,
   onDeleteConnection,
   onRefreshConnection,
+  sortPreferences,
+  onSortPreferencesChange,
+  onExportDataSources,
+  onImportDataSources,
   onOpenObject,
   onImportObject,
 }: SchemaSidebarProps) {
@@ -97,6 +105,10 @@ export function SchemaSidebar({
         onEditConnection={onEditConnection}
         onDuplicateConnection={onDuplicateConnection}
         onRefreshConnection={onRefreshConnection}
+        sortPreferences={sortPreferences}
+        onSortPreferencesChange={onSortPreferencesChange}
+        onExport={onExportDataSources}
+        onImport={onImportDataSources}
       />
 
       <div className="schema-toolbar">

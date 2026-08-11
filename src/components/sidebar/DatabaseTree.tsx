@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowDownAZ,
   ChevronDown,
   ChevronRight,
   Database,
   Copy,
+  Download,
   Folder,
   FolderPlus,
   MoreHorizontal,
@@ -11,9 +13,15 @@ import {
   Server,
   ShieldAlert,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
-import type { ConnectionGroup, ConnectionSummary } from "../../types/connection";
+import type {
+  ConnectionGroup,
+  ConnectionSummary,
+  ExplorerSortOrder,
+  ExplorerSortPreferences,
+} from "../../types/connection";
 import { DatabaseEngineIcon } from "../icons/DatabaseEngineIcon";
 
 interface DatabaseTreeProps {
@@ -27,6 +35,10 @@ interface DatabaseTreeProps {
   onEditConnection: (connection: ConnectionSummary) => void;
   onDuplicateConnection: (connection: ConnectionSummary) => void;
   onRefreshConnection: (connectionId: string) => void;
+  sortPreferences: ExplorerSortPreferences;
+  onSortPreferencesChange: (preferences: ExplorerSortPreferences) => void;
+  onExport: () => void;
+  onImport: () => void;
 }
 
 const COLORS = ["#EF4444", "#F59E0B", "#22C55E", "#3B82F6", "#8B5CF6", "#64748B"];
@@ -48,6 +60,10 @@ export function DatabaseTree({
   onEditConnection,
   onDuplicateConnection,
   onRefreshConnection,
+  sortPreferences,
+  onSortPreferencesChange,
+  onExport,
+  onImport,
 }: DatabaseTreeProps) {
   const [editor, setEditor] = useState<ConnectionGroup | null>();
   const [context, setContext] = useState<{ group: ConnectionGroup; x: number; y: number }>();
@@ -56,12 +72,22 @@ export function DatabaseTree({
     x: number;
     y: number;
   }>();
-  const ungrouped = connections.filter((connection) => !connection.groupId);
+  const [sortOpen, setSortOpen] = useState(false);
+  const orderedGroups = useMemo(
+    () => sortItems(groups, sortPreferences.groups, (group) => group.name),
+    [groups, sortPreferences.groups],
+  );
+  const orderedConnections = useMemo(
+    () => sortItems(connections, sortPreferences.connections, (connection) => connection.label),
+    [connections, sortPreferences.connections],
+  );
+  const ungrouped = orderedConnections.filter((connection) => !connection.groupId);
 
   useEffect(() => {
     const close = () => {
       setContext(undefined);
       setConnectionContext(undefined);
+      setSortOpen(false);
     };
     window.addEventListener("pointerdown", close);
     return () => window.removeEventListener("pointerdown", close);
@@ -117,6 +143,7 @@ export function DatabaseTree({
       name: `${source.name} Copy`,
       isExpanded: true,
       variables: { ...source.variables },
+      variableSecrets: { ...source.variableSecrets },
     };
     const duplicatedConnections = connections
       .filter((connection) => connection.groupId === source.id)
@@ -139,23 +166,60 @@ export function DatabaseTree({
 
   return (
     <div className="database-tree">
-      <button
-        className="create-group-button"
-        onClick={() =>
-          setEditor({
-            id: `group-${crypto.randomUUID()}`,
-            name: "New Group",
-            color: COLORS[3],
-            icon: "Folder",
-            isExpanded: true,
-          })
-        }
-      >
-        <FolderPlus size={14} /> Create New Group
-      </button>
+      <div className="database-tree-toolbar">
+        <button
+          className="create-group-button"
+          onClick={() =>
+            setEditor({
+              id: `group-${crypto.randomUUID()}`,
+              name: "New Group",
+              color: COLORS[3],
+              icon: "Folder",
+              isExpanded: true,
+            })
+          }
+        >
+          <FolderPlus size={14} /> Create New Group
+        </button>
+        <button
+          type="button"
+          className={`explorer-sort-button ${sortOpen ? "active" : ""}`}
+          title="Sort data sources"
+          aria-label="Choose group and connection sorting"
+          aria-expanded={sortOpen}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => setSortOpen((open) => !open)}
+        >
+          <ArrowDownAZ size={15} />
+        </button>
+        <button type="button" className="explorer-sort-button" title="Export data sources" aria-label="Export data sources" onClick={onExport}>
+          <Download size={14} />
+        </button>
+        <button type="button" className="explorer-sort-button" title="Import data sources" aria-label="Import data sources" onClick={onImport}>
+          <Upload size={14} />
+        </button>
+        {sortOpen && (
+          <div className="explorer-sort-panel" onPointerDown={(event) => event.stopPropagation()}>
+            <SortSelect
+              label="Groups"
+              value={sortPreferences.groups}
+              onChange={(groupsOrder) =>
+                onSortPreferencesChange({ ...sortPreferences, groups: groupsOrder })
+              }
+            />
+            <SortSelect
+              label="Connections"
+              value={sortPreferences.connections}
+              onChange={(connectionOrder) =>
+                onSortPreferencesChange({ ...sortPreferences, connections: connectionOrder })
+              }
+            />
+          </div>
+        )}
+      </div>
       <div className="group-scroll">
-        {groups.map((group) => {
-          const children = connections.filter((connection) => connection.groupId === group.id);
+        {orderedGroups.map((group) => {
+          const children = orderedConnections.filter((connection) => connection.groupId === group.id);
           return (
             <ConnectionGroupNode
               key={group.id}
@@ -291,6 +355,38 @@ export function DatabaseTree({
   );
 }
 
+function SortSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: ExplorerSortOrder;
+  onChange: (value: ExplorerSortOrder) => void;
+}) {
+  return (
+    <label>
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value as ExplorerSortOrder)}>
+        <option value="name_asc">Name A–Z</option>
+        <option value="name_desc">Name Z–A</option>
+        <option value="manual">Manual / created order</option>
+      </select>
+    </label>
+  );
+}
+
+function sortItems<T>(items: T[], order: ExplorerSortOrder, getName: (item: T) => string): T[] {
+  if (order === "manual") return items;
+  const direction = order === "name_desc" ? -1 : 1;
+  return [...items].sort((left, right) =>
+    direction * getName(left).localeCompare(getName(right), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+}
+
 function ConnectionGroupNode({
   group,
   connections,
@@ -423,7 +519,12 @@ function GroupEditor({ group, onSave, onClose }: { group: ConnectionGroup | null
     isExpanded: true,
   });
   const [variableRows, setVariableRows] = useState(() =>
-    Object.entries(group?.variables ?? {}).map(([key, value]) => ({ id: crypto.randomUUID(), key, value })),
+    Object.entries(group?.variables ?? {}).map(([key, value]) => ({
+      id: crypto.randomUUID(),
+      key,
+      value,
+      isPassword: group?.variableSecrets?.[key] === true,
+    })),
   );
   const [variableError, setVariableError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -443,6 +544,11 @@ function GroupEditor({ group, onSave, onClose }: { group: ConnectionGroup | null
       await onSave({
         ...draft,
         variables: Object.fromEntries(variableRows.map((row) => [row.key.trim(), row.value])),
+        variableSecrets: Object.fromEntries(
+          variableRows
+            .filter((row) => row.isPassword)
+            .map((row) => [row.key.trim(), true]),
+        ),
       });
     } catch (error) {
       setVariableError(error instanceof Error ? error.message : String(error));
@@ -461,7 +567,7 @@ function GroupEditor({ group, onSave, onClose }: { group: ConnectionGroup | null
           <div className="group-variables-header">
             <span>Environment variables</span>
             <button type="button" onClick={() => {
-              setVariableRows((rows) => [...rows, { id: crypto.randomUUID(), key: "", value: "" }]);
+              setVariableRows((rows) => [...rows, { id: crypto.randomUUID(), key: "", value: "", isPassword: false }]);
               setVariableError(undefined);
             }}><FolderPlus size={12} /> Add variable</button>
           </div>
@@ -475,10 +581,19 @@ function GroupEditor({ group, onSave, onClose }: { group: ConnectionGroup | null
                   setVariableError(undefined);
                 }} />
                 <span>→</span>
-                <input aria-label={`Value for ${row.key || "variable"}`} placeholder="value" value={row.value} onChange={(event) => {
+                <input type={row.isPassword ? "password" : "text"} autoComplete="off" aria-label={`Value for ${row.key || "variable"}`} placeholder="value" value={row.value} onChange={(event) => {
                   const value = event.target.value;
                   setVariableRows((rows) => rows.map((item) => item.id === row.id ? { ...item, value } : item));
                 }} />
+                <label className="group-variable-password" title="Mask this variable as a password">
+                  <input type="checkbox" checked={row.isPassword} onChange={(event) => {
+                    const isPassword = event.target.checked;
+                    setVariableRows((rows) => rows.map((item) => item.id === row.id
+                      ? { ...item, isPassword, value: !isPassword && item.isPassword ? "" : item.value }
+                      : item));
+                  }} />
+                  Password
+                </label>
                 <button type="button" title="Remove variable" onClick={() => setVariableRows((rows) => rows.filter((item) => item.id !== row.id))}><Trash2 size={13} /></button>
               </div>
             ))}
