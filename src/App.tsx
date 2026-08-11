@@ -5,6 +5,8 @@ import {
   type DockviewReadyEvent,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
+import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   Activity,
   CircleStop,
@@ -22,6 +24,7 @@ import { QueryPanel, formatDuration } from "./components/QueryPanel";
 import { TabBar } from "./components/tabs/TabBar";
 import { ConnectionModal } from "./components/ConnectionModal";
 import { SchemaSidebar } from "./components/SchemaSidebar";
+import { DataSourceTransferModal } from "./components/sidebar/DataSourceTransferModal";
 import {
   WorkspaceContext,
   type QueryActivity,
@@ -42,10 +45,18 @@ import {
   type ConnectionSummary,
   type ConnectionConfig,
   type ConnectionGroup,
+  type ConnectionWorkspace,
+  type ExplorerSortPreferences,
   type SchemaTree,
 } from "./types/database";
 import { buildObjectPreviewQuery } from "./utils/queryTemplates";
 import { resolveConnectionConfig } from "./utils/connectionVariables";
+import {
+  createDataSourceBundle,
+  mergeDataSourceBundle,
+  parseDataSourceBundle,
+  type DataSourceBundle,
+} from "./utils/workspaceTransfer";
 
 const INITIAL_CONNECTIONS: ConnectionSummary[] = [
   {
@@ -102,6 +113,10 @@ const INITIAL_GROUPS: ConnectionGroup[] = [
 ];
 
 const EMPTY_SCHEMA: SchemaTree = { databases: [] };
+const DEFAULT_EXPLORER_SORT: ExplorerSortPreferences = {
+  groups: "name_asc",
+  connections: "name_asc",
+};
 
 const PREVIEW_SCHEMA: SchemaTree = {
   databases: [
@@ -160,6 +175,10 @@ const PREVIEW_SCHEMA: SchemaTree = {
 function App() {
   const [connections, setConnections] = useState(INITIAL_CONNECTIONS);
   const [groups, setGroups] = useState(INITIAL_GROUPS);
+  const [sortPreferences, setSortPreferences] = useState<ExplorerSortPreferences>(DEFAULT_EXPLORER_SORT);
+  const [dataSourceTransfer, setDataSourceTransfer] = useState<
+    { mode: "export" } | { mode: "import"; bundle: DataSourceBundle }
+  >();
   const [storageReady, setStorageReady] = useState(false);
   const [activeConnectionId, setActiveConnectionId] = useState(INITIAL_CONNECTIONS[0].id);
   const [connectionModal, setConnectionModal] = useState<{
@@ -186,13 +205,9 @@ function App() {
   const queryOrdinal = useRef(0);
   const workspaceMutation = useRef(0);
   const workspaceSaveQueue = useRef<Promise<void>>(Promise.resolve());
-  const connectionAttempts = useRef(new Map<string, Promise<void>>());
+  const connectionAttempts = useRef(new Map<string, Promise<SchemaTree | undefined>>());
 
-  const persistWorkspace = useCallback((workspace: {
-    hasInitializedDefaults: boolean;
-    groups: ConnectionGroup[];
-    connections: ConnectionSummary[];
-  }) => {
+  const persistWorkspace = useCallback((workspace: ConnectionWorkspace) => {
     const save = workspaceSaveQueue.current
       .catch(() => undefined)
       .then(() => saveConnectionWorkspace(workspace));
@@ -225,6 +240,7 @@ function App() {
         ...current,
         [connectionId]: nextSchema,
       }));
+      return nextSchema;
     } catch (error) {
       setSchemaError(
         typeof error === "object" && error && "message" in error
@@ -247,7 +263,7 @@ function App() {
     const connection = connections.find((item) => item.id === connectionId);
     if (!connection?.config) {
       setSchemaError("This connection has no saved configuration.");
-      return;
+      return undefined;
     }
     const attempt = (async () => {
       setSchemaLoading(true);
@@ -258,14 +274,29 @@ function App() {
         const normalized = normalizeBackendError(error);
         if (normalized.code !== "CONNECTION_ALREADY_EXISTS") {
           setSchemaError(normalized.message);
-          return;
+          return undefined;
         }
       }
-      await loadSchemaFor(connectionId);
+      return loadSchemaFor(connectionId);
     })().finally(() => connectionAttempts.current.delete(connectionId));
     connectionAttempts.current.set(connectionId, attempt);
     return attempt;
   }, [connections, groups, loadSchemaFor]);
+
+  const ensureExportConnection = useCallback(async (connectionId: string) => {
+    const connection = connections.find((item) => item.id === connectionId);
+    if (!connection?.config) throw new Error("This connection has no saved configuration.");
+    try {
+      await connectDatabase(connectionId, resolveConnectionConfig(connection.config, groups));
+    } catch (error) {
+      const normalized = normalizeBackendError(error);
+      if (normalized.code !== "CONNECTION_ALREADY_EXISTS") throw error;
+    }
+    await refreshSchemaCache(connectionId);
+    const nextSchema = await fetchSchemaTree(connectionId);
+    setSchemaByConnection((current) => ({ ...current, [connectionId]: nextSchema }));
+    return nextSchema;
+  }, [connections, groups]);
 
   const selectConnection = useCallback((connectionId: string) => {
     setActiveConnectionId(connectionId);
@@ -285,6 +316,7 @@ function App() {
         if (workspace.hasInitializedDefaults) {
           setConnections(workspace.connections);
           setGroups(workspace.groups);
+          setSortPreferences(workspace.sortPreferences ?? DEFAULT_EXPLORER_SORT);
           if (workspace.connections.length > 0) {
             setActiveConnectionId(workspace.connections[0].id);
           } else {
@@ -302,11 +334,11 @@ function App() {
   useEffect(() => {
     if (!storageReady) return;
     const timeout = window.setTimeout(() => {
-      void persistWorkspace({ hasInitializedDefaults: true, groups, connections })
+      void persistWorkspace({ hasInitializedDefaults: true, groups, connections, sortPreferences })
         .catch((error) => setSchemaError(normalizeBackendError(error).message));
     }, 250);
     return () => window.clearTimeout(timeout);
-  }, [connections, groups, persistWorkspace, storageReady]);
+  }, [connections, groups, persistWorkspace, sortPreferences, storageReady]);
 
   const addQueryTab = useCallback(() => {
     const api = dockviewApi.current;
@@ -399,8 +431,11 @@ function App() {
       runRequest,
       cancelRequest,
       reportActivity: setActivity,
+      connections,
+      groups,
+      ensureConnection: ensureExportConnection,
     }),
-    [cancelRequest, completionCatalogByConnection, limit, runRequest],
+    [cancelRequest, completionCatalogByConnection, connections, ensureExportConnection, groups, limit, runRequest],
   );
 
   const isRunDisabled = !hasActiveQueryTab || activity.running;
@@ -443,8 +478,9 @@ function App() {
       hasInitializedDefaults: true,
       groups: nextGroups,
       connections,
+      sortPreferences,
     });
-  }, [connections, groups, persistWorkspace]);
+  }, [connections, groups, persistWorkspace, sortPreferences]);
 
   const updateConnections = useCallback(
     (nextConnections: ConnectionSummary[]) => {
@@ -486,11 +522,70 @@ function App() {
         hasInitializedDefaults: true,
         groups,
         connections: remaining,
+        sortPreferences,
       });
       return true;
     },
-    [activeConnectionId, connections, groups],
+    [activeConnectionId, connections, groups, sortPreferences],
   );
+
+  const selectImportBundle = useCallback(async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "Database4every1 Data Sources", extensions: ["json", "db4e1"] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const text = await invoke<string>("read_import_file", { path: selected });
+      setDataSourceTransfer({ mode: "import", bundle: parseDataSourceBundle(text) });
+    } catch (error) {
+      setSchemaError(normalizeBackendError(error).message);
+    }
+  }, []);
+
+  const exportDataSources = useCallback(async (
+    selectedGroupIds: Set<string>,
+    selectedConnectionIds: Set<string>,
+    includeSecrets: boolean,
+  ) => {
+    const bundle = createDataSourceBundle(
+      groups,
+      connections,
+      selectedGroupIds,
+      selectedConnectionIds,
+      includeSecrets,
+    );
+    const path = await save({
+      defaultPath: `database4every1-data-sources-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: "Database4every1 Data Sources", extensions: ["json"] }],
+    });
+    if (!path) return;
+    const bytes = new TextEncoder().encode(JSON.stringify(bundle, null, 2));
+    await invoke("save_export_file", { path, data: bytesToBase64(bytes) });
+  }, [connections, groups]);
+
+  const importDataSources = useCallback(async (
+    bundle: DataSourceBundle,
+    selectedGroupIds: Set<string>,
+    selectedConnectionIds: Set<string>,
+  ) => {
+    const merged = mergeDataSourceBundle(
+      groups,
+      connections,
+      bundle,
+      selectedGroupIds,
+      selectedConnectionIds,
+    );
+    workspaceMutation.current += 1;
+    setGroups(merged.groups);
+    setConnections(merged.connections);
+    await persistWorkspace({
+      hasInitializedDefaults: true,
+      groups: merged.groups,
+      connections: merged.connections,
+      sortPreferences,
+    });
+  }, [connections, groups, persistWorkspace, sortPreferences]);
 
   return (
     <WorkspaceContext.Provider value={workspaceValue}>
@@ -580,6 +675,10 @@ function App() {
               onConnectionsChange={updateConnections}
               onDeleteConnection={(connection) => void deleteConnection(connection)}
               onRefreshConnection={(connectionId) => void connectAndLoadConnection(connectionId)}
+              sortPreferences={sortPreferences}
+              onSortPreferencesChange={setSortPreferences}
+              onExportDataSources={() => setDataSourceTransfer({ mode: "export" })}
+              onImportDataSources={() => void selectImportBundle()}
               onOpenObject={openSchemaObject}
               onImportObject={importSchemaObject}
             />
@@ -604,6 +703,19 @@ function App() {
             onDelete={connectionModal.connection && !connectionModal.duplicate
               ? () => deleteConnection(connectionModal.connection!)
               : undefined}
+          />
+        )}
+        {dataSourceTransfer && (
+          <DataSourceTransferModal
+            mode={dataSourceTransfer.mode}
+            groups={dataSourceTransfer.mode === "import" ? dataSourceTransfer.bundle.groups : groups}
+            connections={dataSourceTransfer.mode === "import" ? dataSourceTransfer.bundle.connections : connections}
+            onClose={() => setDataSourceTransfer(undefined)}
+            onConfirm={(groupIds, connectionIds, includeSecrets) =>
+              dataSourceTransfer.mode === "export"
+                ? exportDataSources(groupIds, connectionIds, includeSecrets)
+                : importDataSources(dataSourceTransfer.bundle, groupIds, connectionIds)
+            }
           />
         )}
         {settingsOpen && (
@@ -702,6 +814,14 @@ function sqlImportValue(value: unknown) {
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   const text = typeof value === "object" ? JSON.stringify(value) : String(value);
   return `'${text.split("'").join("''")}'`;
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
 }
 
 export default App;

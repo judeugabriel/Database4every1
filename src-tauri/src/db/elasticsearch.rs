@@ -40,7 +40,7 @@ enum ElasticsearchQuery {
         body: Value,
     },
     Sql(Value),
-    IndexDocument { index: String, body: Value },
+    IndexDocument { method: Method, path: String, body: Value },
     Mutation { method: Method, path: String, body: Option<Value> },
 }
 
@@ -169,11 +169,11 @@ impl DatabaseDriver for ElasticsearchDriver {
                     .map_err(query_error)?;
                 response_body(response).await?
             }
-            ElasticsearchQuery::IndexDocument { index, body } => {
+            ElasticsearchQuery::IndexDocument { method, path, body } => {
                 let response = client
                     .send(
-                        Method::Post,
-                        &format!("/{index}/_doc"),
+                        method,
+                        &path,
                         HeaderMap::new(),
                         None::<&()>,
                         Some(JsonBody::new(body)),
@@ -513,7 +513,7 @@ fn parse_query(query: &str, default_index: Option<&str>) -> Result<Elasticsearch
         return Ok(ElasticsearchQuery::Sql(json!({ "query": query })));
     }
     let uppercase = query.to_ascii_uppercase();
-    if uppercase.starts_with("POST ") || uppercase.starts_with("GET ") || uppercase.starts_with("DELETE ") {
+    if uppercase.starts_with("POST ") || uppercase.starts_with("PUT ") || uppercase.starts_with("GET ") || uppercase.starts_with("DELETE ") {
         let (request_line, body_text) = query.split_once('\n').unwrap_or((query, ""));
         let (method, path) = request_line
             .split_once(char::is_whitespace)
@@ -530,9 +530,10 @@ fn parse_query(query: &str, default_index: Option<&str>) -> Result<Elasticsearch
         let method = match method_name.as_str() {
             "GET" => ElasticsearchHttpMethod::Get,
             "POST" => ElasticsearchHttpMethod::Post,
+            "PUT" => ElasticsearchHttpMethod::Post,
             _ => {
                 return Err(DbError::Query(
-                    "only GET and POST requests are supported".into(),
+                    "only GET, POST, PUT, and DELETE requests are supported".into(),
                 ))
             }
         };
@@ -545,8 +546,10 @@ fn parse_query(query: &str, default_index: Option<&str>) -> Result<Elasticsearch
         if path.trim_end_matches('/') == "/_sql" {
             return Ok(ElasticsearchQuery::Sql(body));
         }
-        if let Some(index) = path.strip_prefix('/').and_then(|path| path.strip_suffix("/_doc")).filter(|index| !index.is_empty()) {
-            return Ok(ElasticsearchQuery::IndexDocument { index: index.to_owned(), body });
+        let path_parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        if path_parts.len() >= 2 && path_parts[0].len() > 0 && path_parts[1] == "_doc" && path_parts.len() <= 3 {
+            let request_method = if method_name == "PUT" { Method::Put } else { Method::Post };
+            return Ok(ElasticsearchQuery::IndexDocument { method: request_method, path: path.to_owned(), body });
         }
         if path.contains("/_update/") {
             return Ok(ElasticsearchQuery::Mutation { method: Method::Post, path: path.to_owned(), body: Some(body) });

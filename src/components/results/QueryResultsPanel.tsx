@@ -12,6 +12,7 @@ import type { BackendError, QueryResult } from "../../types/database";
 import { GlideResultsGrid, type GridSort } from "./GlideResultsGrid";
 import { ExportResultsModal } from "./ExportResultsModal";
 import type { GridDataChange } from "../QueryDataGrid";
+import type { DatabaseEngine } from "../../types/connection";
 
 export interface QueryLogEntry {
   timestamp: string;
@@ -44,6 +45,7 @@ interface QueryResultsPanelProps {
   onCommitChanges: () => void;
   onCancelChanges: () => void;
   editResetVersion: number;
+  sourceEngine?: DatabaseEngine;
 }
 
 export function QueryResultsPanel({
@@ -67,6 +69,7 @@ export function QueryResultsPanel({
   onCommitChanges,
   onCancelChanges,
   editResetVersion,
+  sourceEngine,
 }: QueryResultsPanelProps) {
   const [tab, setTab] = useState<"results" | "output">("results");
   const [exportOpen, setExportOpen] = useState(false);
@@ -110,7 +113,7 @@ export function QueryResultsPanel({
       {tab === "results" && result && (
         <PaginationBar result={result} page={page} limit={limit} running={running} onPageChange={onPageChange} pendingChanges={pendingChanges} onCommitChanges={onCommitChanges} onCancelChanges={onCancelChanges} />
       )}
-      {exportOpen && result && <ExportResultsModal result={result} loadAll={onExportAll} onClose={() => setExportOpen(false)} />}
+      {exportOpen && result && <ExportResultsModal result={result} sourceEngine={sourceEngine} loadAll={onExportAll} onClose={() => setExportOpen(false)} />}
     </>
   );
 }

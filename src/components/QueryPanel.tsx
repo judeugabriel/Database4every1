@@ -417,6 +417,7 @@ export function QueryPanel({ api, params }: IDockviewPanelProps<QueryPanelParams
           onCommitChanges={() => void commitChanges()}
           onCancelChanges={cancelChanges}
           editResetVersion={editResetVersion}
+          sourceEngine={tabConnection?.engine}
         />
       </section>
     </div>

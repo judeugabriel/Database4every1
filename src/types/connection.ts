@@ -5,6 +5,7 @@ export interface ConnectionGroup {
   icon?: "Folder" | "Server" | "ShieldAlert" | "Database";
   isExpanded?: boolean;
   variables?: Record<string, string>;
+  variableSecrets?: Record<string, boolean>;
 }
 
 export type DatabaseEngine =
@@ -53,8 +54,16 @@ export interface ConnectionSummary {
   config?: ConnectionConfig;
 }
 
+export type ExplorerSortOrder = "name_asc" | "name_desc" | "manual";
+
+export interface ExplorerSortPreferences {
+  groups: ExplorerSortOrder;
+  connections: ExplorerSortOrder;
+}
+
 export interface ConnectionWorkspace {
   hasInitializedDefaults: boolean;
   groups: ConnectionGroup[];
   connections: ConnectionSummary[];
+  sortPreferences?: ExplorerSortPreferences;
 }
